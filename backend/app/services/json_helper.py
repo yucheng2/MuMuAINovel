@@ -102,9 +102,24 @@ def _is_content_quote(text: str, pos: int) -> bool:
     # : → 通常在字符串结束后不可能出现，保守处理为结束引号
     if ch == ':':
         return False
-    
+
     # 其他字符（中文、字母等）→ 内容引号
     return True
+
+
+def _unwrap_single_quoted_json(text: str) -> str:
+    """
+    去除被单引号包裹的 JSON，如 '{ "key": "value" }' → '{ "key": "value" }'
+    某些 AI 会返回这种格式的 JSON。
+    """
+    text = text.strip()
+    # 如果以单引号开始和结束，且中间是 { 或 [，则去除单引号
+    if len(text) >= 2 and text.startswith("'") and text.endswith("'"):
+        inner = text[1:-1].strip()
+        if inner.startswith("{") or inner.startswith("["):
+            logger.debug(f"   去除单引号包裹: '{text[:50]}...' → '{inner[:50]}...'")
+            return inner
+    return text
 
 
 def _fix_json_string_values(text: str) -> str:
@@ -380,10 +395,13 @@ def clean_json_response(text: str) -> str:
         text = re.sub(r'^```\s*\n?', '', text, flags=re.MULTILINE)
         text = re.sub(r'\n?```\s*$', '', text, flags=re.MULTILINE)
         text = text.strip()
-        
+
         if len(text) != original_length:
             logger.debug(f"   移除markdown后长度: {len(text)}")
-        
+
+        # 修复：去除被单引号包裹的 JSON（如 '{ "key": "value" }'）
+        text = _unwrap_single_quoted_json(text)
+
         # 尝试直接解析（快速路径）
         try:
             json.loads(text)
