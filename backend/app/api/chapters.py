@@ -1428,12 +1428,13 @@ async def generate_chapter_content_stream(
                         .execution_options(populate_existing=True)
                     )
                 else:
-                    # 回退到按序号查找
+                    # 回退到按序号查找，添加 limit(1) 避免重复数据导致 Multiple rows 错误
                     outline_result = await db_session.execute(
                         select(Outline)
                         .where(Outline.project_id == current_chapter.project_id)
                         .where(Outline.order_index == current_chapter.chapter_number)
                         .execution_options(populate_existing=True)
+                        .limit(1)
                     )
                 outline = outline_result.scalar_one_or_none()
                 
@@ -1975,6 +1976,7 @@ async def _run_chapter_generation_bg(
             select(Outline)
             .where(Outline.project_id == current_chapter.project_id)
             .where(Outline.order_index == current_chapter.chapter_number)
+            .limit(1)
         )
     outline = outline_result.scalar_one_or_none()
 
@@ -3444,11 +3446,12 @@ async def generate_single_chapter_for_batch(
             select(Outline).where(Outline.id == chapter.outline_id)
         )
     else:
-        # 回退到按序号查找
+        # 回退到按序号查找，添加 limit(1) 避免重复数据导致 Multiple rows 错误
         outline_result = await db_session.execute(
             select(Outline)
             .where(Outline.project_id == chapter.project_id)
             .where(Outline.order_index == chapter.chapter_number)
+            .limit(1)
         )
     outline = outline_result.scalar_one_or_none()
     
