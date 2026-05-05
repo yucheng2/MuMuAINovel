@@ -1,0 +1,15 @@
+{
+  "name": "mumuainovel-docs",
+  "version": "1.0.0",
+  "description": "MuMuAINovel 智能小说创作助手文档",
+  "scripts": {
+    "dev": "vuepress dev docs",
+    "build": "vuepress build docs",
+    "clean": "vuepress clean docs"
+  },
+  "devDependencies": {
+    "vuepress": "^2.0.0-rc.0",
+    "@vuepress/theme-default": "^2.0.0-rc.0",
+    "vuepress-plugin-search-pro": "^2.0.0-rc.0"
+  }
+}

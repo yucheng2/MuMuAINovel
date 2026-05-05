@@ -15,6 +15,7 @@ from app.services.chapter_context_service import (
     OneToManyContextBuilder,
     OneToOneContextBuilder
 )
+from app.services.langchain_service import LangChainService
 from app.models.chapter import Chapter
 from app.models.project import Project
 from app.models.outline import Outline
@@ -1666,9 +1667,13 @@ async def generate_chapter_content_stream(
                 )
                 
                 async for chunk in user_ai_service.generate_text_stream(**generate_kwargs):
+                    # 去除 chunk 中的思考块（如 MiniMax 等推理模型会返回 <think>...</think>）
+                    chunk = LangChainService._strip_thinking(chunk)
+                    if not chunk:  # 如果 chunk 只剩空白，跳过
+                        continue
                     full_content += chunk
                     chunk_count += 1
-                    
+
                     # 发送内容块
                     yield await tracker.generating_chunk(chunk)
                     
@@ -1688,7 +1693,10 @@ async def generate_chapter_content_stream(
                 
                 # === 保存阶段 ===
                 yield await tracker.saving("正在保存章节...", 0.3)
-                
+
+                # 去除 AI 返回的思考块（如 MiniMax 等推理模型会返回 <think>...</think>）
+                full_content = LangChainService._strip_thinking(full_content)
+
                 # 更新章节内容到数据库
                 old_word_count = current_chapter.word_count or 0
                 current_chapter.content = full_content
@@ -2148,6 +2156,10 @@ async def _run_chapter_generation_bg(
             logger.info(f"🚫 后台章节生成被取消: {chapter_id}")
             return
 
+        # 去除 chunk 中的思考块（如 MiniMax 等推理模型会返回 <think>...</think>）
+        chunk = LangChainService._strip_thinking(chunk)
+        if not chunk:
+            continue
         full_content += chunk
         chunk_count += 1
 
@@ -2173,6 +2185,9 @@ async def _run_chapter_generation_bg(
         if not current_chapter:
             await tracker.error("保存时章节不存在")
             return
+
+        # 去除 AI 返回的思考块（如 MiniMax 等推理模型会返回 <think>...</think>）
+        full_content = LangChainService._strip_thinking(full_content)
 
         old_word_count = current_chapter.word_count or 0
         current_chapter.content = full_content
@@ -3634,9 +3649,16 @@ async def generate_single_chapter_for_batch(
     
     # 批量生成中的流式生成（非SSE，不需要修改进度显示）
     async for chunk in ai_service.generate_text_stream(**generate_kwargs):
+        # 去除 chunk 中的思考块
+        chunk = LangChainService._strip_thinking(chunk)
+        if not chunk:
+            continue
         full_content += chunk
-    
+
     # 更新章节内容到数据库（使用锁保护）
+    # 去除 AI 返回的思考块（如 MiniMax 等推理模型会返回 <think>...</think>）
+    full_content = LangChainService._strip_thinking(full_content)
+
     async with write_lock:
         old_word_count = chapter.word_count or 0
         chapter.content = full_content
@@ -3943,8 +3965,11 @@ async def regenerate_chapter_stream(
                     if event['type'] == 'chunk':
                         # 内容块
                         chunk = event['content']
-                        full_content += chunk
-                        yield await tracker.generating_chunk(chunk)
+                        # 去除 chunk 中的思考块
+                        chunk = LangChainService._strip_thinking(chunk)
+                        if chunk:  # 只在有实际内容时处理
+                            full_content += chunk
+                            yield await tracker.generating_chunk(chunk)
                         
                         # 定期更新进度
                         if len(full_content) % 500 == 0:
@@ -3972,7 +3997,10 @@ async def regenerate_chapter_stream(
                 
                 # === 保存阶段 ===
                 yield await tracker.saving("保存重新生成的内容...", 0.5)
-                
+
+                # 去除 AI 返回的思考块（如 MiniMax 等推理模型会返回 <think>...</think>）
+                full_content = LangChainService._strip_thinking(full_content)
+
                 # 更新任务状态
                 regen_task.status = 'completed'
                 regen_task.regenerated_content = full_content
@@ -4353,9 +4381,13 @@ async def partial_regenerate_stream(
                 prompt=prompt,
                 max_tokens=calculated_max_tokens
             ):
+                # 去除 chunk 中的思考块
+                chunk = LangChainService._strip_thinking(chunk)
+                if not chunk:
+                    continue
                 full_content += chunk
                 chunk_count += 1
-                
+
                 # 发送内容块
                 yield await tracker.generating_chunk(chunk)
                 
