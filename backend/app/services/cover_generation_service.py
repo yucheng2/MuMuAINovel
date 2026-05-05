@@ -232,7 +232,7 @@ class CoverGenerationService:
         if provider_value == "ciyuan":
             if normalized_base_url.endswith("/v1beta"):
                 return GeminiCoverProvider(api_key=api_key, base_url=normalized_base_url)
-            return GrokCoverProvider(api_key=api_key, base_url=normalized_base_url or "https://ciyuan.today/v1")
+            return GrokCoverProvider(api_key=api_key, base_url=normalized_base_url or "https://ciyuan.today/v1", use_response_format=False)
         raise HTTPException(status_code=400, detail="当前版本仅支持 Gemini、Grok、MuMuのAPI 或 CiYuan API 作为封面图片 Provider")
 
     def _save_cover_file(

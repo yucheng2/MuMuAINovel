@@ -16,9 +16,10 @@ logger = get_logger(__name__)
 class GrokCoverProvider(BaseCoverProvider):
     """基于 xAI Grok Images API 的封面生成实现"""
 
-    def __init__(self, api_key: str, base_url: str):
+    def __init__(self, api_key: str, base_url: str, use_response_format: bool = True):
         self.api_key = api_key
         self.base_url = (base_url or "https://api.x.ai/v1").rstrip("/")
+        self.use_response_format = use_response_format
 
     async def generate_cover(
         self,
@@ -49,10 +50,11 @@ class GrokCoverProvider(BaseCoverProvider):
             "model": model,
             "prompt": self._adapt_prompt(prompt=prompt, width=width, height=height),
             "n": 1,
-            "response_format": "b64_json",
             "aspect_ratio": self._get_aspect_ratio(width=width, height=height),
             "resolution": self._get_resolution(width=width, height=height),
         }
+        if self.use_response_format:
+            payload["response_format"] = "b64_json"
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
