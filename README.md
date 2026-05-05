@@ -363,40 +363,52 @@ docker-compose up -d
 
 ### 本地开发 / 从源码构建
 
-#### 前置准备
+#### 环境要求
 
-```bash
-# ⚠️ 重要：如果从源码构建，需要先下载 embedding 模型文件
-# 模型文件较大（约 400MB），需放置到以下目录：
-# backend/embedding/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2/
-#
-# 📥 获取方式：
-# - 加入项目 QQ 群或 Linux DO 讨论区获取下载链接
-# - 群号：见项目主页
-# - Linux DO：https://linux.do/t/topic/1100112
-```
+- **Python**: 3.11+ (推荐 3.11)
+- **Node.js**: 18+
+- **PostgreSQL**: 12+ (或使用远程数据库)
 
 #### 后端
 
 ```bash
+# 1. 进入后端目录
 cd backend
+
+# 2. 创建虚拟环境（推荐）
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# 3. 安装依赖
 pip install -r requirements.txt
 
-# 配置 .env 文件
+# 4. 配置环境变量
 cp .env.example .env
-# 编辑 .env 填入必要配置
+# 编辑 .env 填入必要配置（数据库连接、AI API Key 等）
 
-# 启动 PostgreSQL（可使用 Docker）
-docker run -d --name postgres \
-  -e POSTGRES_PASSWORD=your_password \
-  -e POSTGRES_DB=mumuai_novel \
-  -p 5432:5432 \
-  postgres:18-alpine
+# 5. 数据库迁移
+# 确保数据库已创建，并执行：
+alembic upgrade head
 
-# 启动后端
-python -m uvicorn app.main:app --host localhost --port 8000 --reload
+# 6. 下载 Embedding 模型（首次运行会自动下载，也可手动下载）
+# 模型目录：backend/embedding/
+# 使用 HuggingFace 镜像加速下载：
+HF_ENDPOINT=https://hf-mirror.com python -c "
+from sentence_transformers import SentenceTransformer
+model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+    cache_folder='embedding')
+print('Model downloaded!')
+"
+
+# 7. 设置离线模式（防止运行时联网下载模型）
+export TRANSFORMERS_OFFLINE=1
+export HF_HUB_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
+
+# 8. 启动后端
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+# 或开发模式（支持热重载）：
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 #### 前端
@@ -405,8 +417,35 @@ python -m uvicorn app.main:app --host localhost --port 8000 --reload
 cd frontend
 npm install
 npm run dev  # 开发模式
-npm run build  # 生产构建
+npm run build  # 生产构建（构建后静态文件在 backend/static/）
 ```
+
+#### 使用远程 PostgreSQL 数据库
+
+如果使用远程数据库（如 124.222.79.106），确保：
+
+1. 数据库已创建：`mumuai_novel`
+2. 用户有 public schema 权限：
+```sql
+GRANT ALL PRIVILEGES ON SCHEMA public TO mumuai;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO mumuai;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO mumuai;
+```
+
+3. `.env` 中配置正确的数据库连接：
+```bash
+DATABASE_URL=postgresql+asyncpg://mumuai:密码@124.222.79.106:5432/mumuai_novel
+```
+
+#### 常见问题
+
+| 问题 | 解决方案 |
+|------|---------|
+| `No module named 'xxx'` | 重新安装依赖：`pip install -r requirements.txt` |
+| `No module named 'greenlet'` | 安装 greenlet：`pip install greenlet` |
+| 模型下载失败 | 设置镜像：`HF_ENDPOINT=https://hf-mirror.com` |
+| 数据库连接失败 | 检查 `.env` 中 `DATABASE_URL` 配置 |
+| `permission denied for schema public` | 授权：`GRANT ALL PRIVILEGES ON SCHEMA public TO mumuai;` |
 
 ## ⚙️ 配置说明
 
