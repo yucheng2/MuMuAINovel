@@ -290,6 +290,10 @@ export default function SettingsPage() {
     { value: 'https://api.mumuverse.space/v1beta', label: 'https://api.mumuverse.space/v1beta', defaultModel: 'gemini-3.1-flash-image-preview' },
     { value: 'https://api.mumuverse.space/v1', label: 'https://api.mumuverse.space/v1', defaultModel: 'gpt-image-1.5' },
   ];
+  const ciyuanTextDefaultUrl = 'https://ciyuan.today';
+  const ciyuanCoverBaseUrlOptions = [
+    { value: 'https://ciyuan.today', label: 'https://ciyuan.today', defaultModel: 'gpt-image-1.5' },
+  ];
   const defaultCoverSettings = {
     cover_enabled: false,
     cover_api_provider: 'mumu',
@@ -339,6 +343,12 @@ export default function SettingsPage() {
       defaultUrl: mumuCoverBaseUrlOptions[0].value,
       defaultModel: mumuCoverBaseUrlOptions[0].defaultModel,
     },
+    {
+      value: 'ciyuan',
+      label: 'CiYuan API',
+      defaultUrl: ciyuanCoverBaseUrlOptions[0].value,
+      defaultModel: ciyuanCoverBaseUrlOptions[0].defaultModel,
+    },
     { value: 'gemini', label: 'Google Gemini', defaultUrl: 'https://generativelanguage.googleapis.com/v1beta' },
     { value: 'grok', label: 'Grok', defaultUrl: 'https://api.x.ai/v1' },
   ];
@@ -357,6 +367,10 @@ export default function SettingsPage() {
     if (provider.value === 'mumu') {
       nextValues.cover_api_key = '';
       nextValues.cover_image_model = provider.defaultModel || mumuCoverBaseUrlOptions[0].defaultModel;
+    }
+    if (provider.value === 'ciyuan') {
+      nextValues.cover_api_key = '';
+      nextValues.cover_image_model = provider.defaultModel || ciyuanCoverBaseUrlOptions[0].defaultModel;
     }
 
     form.setFieldsValue(nextValues);
@@ -1764,8 +1778,32 @@ export default function SettingsPage() {
                           />
                         )}
 
+                        {selectedCoverProvider === 'ciyuan' && (
+                          <Alert
+                            type="info"
+                            showIcon
+                            message="CiYuan API 专属适配器"
+                            description={
+                              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                                <Text>
+                                  已固定提供 CiYuan API 图片接口地址选项，切换地址时会自动带出推荐模型。API Key 需前往 CiYuan API 站点注册获取。
+                                </Text>
+                                <div>
+                                  <Button
+                                    type="primary"
+                                    onClick={() => window.open(ciyuanTextDefaultUrl, '_blank', 'noopener,noreferrer')}
+                                  >
+                                    打开 CiYuan API 站点
+                                  </Button>
+                                </div>
+                              </Space>
+                            }
+                            style={{ marginBottom: 16 }}
+                          />
+                        )}
+
                         <Form.Item label="封面图片 API Key" name="cover_api_key" rules={[{ required: true, message: '请输入封面图片 API Key' }]}>
-                          <Input.Password size={isMobile ? 'middle' : 'large'} placeholder={selectedCoverProvider === 'mumu' ? '请输入 MuMuのAPI Key' : '输入封面图片 API Key'} autoComplete="new-password" />
+                          <Input.Password size={isMobile ? 'middle' : 'large'} placeholder={selectedCoverProvider === 'mumu' ? '请输入 MuMuのAPI Key' : selectedCoverProvider === 'ciyuan' ? '请输入 CiYuan API Key' : '输入封面图片 API Key'} autoComplete="new-password" />
                         </Form.Item>
 
                         <Form.Item label="封面图片 API 地址" name="cover_api_base_url" rules={[{ type: 'url', message: '请输入有效的URL' }]}>
@@ -1774,6 +1812,22 @@ export default function SettingsPage() {
                               size={isMobile ? 'middle' : 'large'}
                               onChange={handleMumuCoverBaseUrlChange}
                               options={mumuCoverBaseUrlOptions.map(option => ({
+                                value: option.value,
+                                label: option.label,
+                              }))}
+                            />
+                          ) : selectedCoverProvider === 'ciyuan' ? (
+                            <Select
+                              size={isMobile ? 'middle' : 'large'}
+                              onChange={(value) => {
+                                const option = ciyuanCoverBaseUrlOptions.find(item => item.value === value);
+                                form.setFieldsValue({
+                                  cover_api_base_url: value,
+                                  cover_image_model: option?.defaultModel || ciyuanCoverBaseUrlOptions[0].defaultModel,
+                                });
+                                setCoverTestResult(null);
+                              }}
+                              options={ciyuanCoverBaseUrlOptions.map(option => ({
                                 value: option.value,
                                 label: option.label,
                               }))}

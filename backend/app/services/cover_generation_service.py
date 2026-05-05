@@ -229,7 +229,9 @@ class CoverGenerationService:
             if normalized_base_url.endswith("/v1beta"):
                 return GeminiCoverProvider(api_key=api_key, base_url=normalized_base_url)
             return GrokCoverProvider(api_key=api_key, base_url=normalized_base_url or "https://api.mumuverse.space/v1")
-        raise HTTPException(status_code=400, detail="当前版本仅支持 Gemini、Grok 或 MuMuのAPI 作为封面图片 Provider")
+        if provider_value == "ciyuan":
+            return GrokCoverProvider(api_key=api_key, base_url=normalized_base_url or "https://ciyuan.today")
+        raise HTTPException(status_code=400, detail="当前版本仅支持 Gemini、Grok、MuMuのAPI 或 CiYuan API 作为封面图片 Provider")
 
     def _save_cover_file(
         self,
