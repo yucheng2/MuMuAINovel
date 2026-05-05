@@ -7,6 +7,7 @@ export const sidebarConfig = {
         '/guide/intro.md',
         '/guide/quick-start.md',
         '/guide/installation.md',
+        '/guide/usage.md',
         '/guide/deployment.md',
       ],
     },
