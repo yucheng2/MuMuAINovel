@@ -292,7 +292,8 @@ export default function SettingsPage() {
   ];
   const ciyuanTextDefaultUrl = 'https://ciyuan.today';
   const ciyuanCoverBaseUrlOptions = [
-    { value: 'https://ciyuan.today', label: 'https://ciyuan.today', defaultModel: 'gpt-image-1.5' },
+    { value: 'https://ciyuan.today/v1beta', label: 'https://ciyuan.today/v1beta', defaultModel: 'gemini-3.1-flash-image-preview' },
+    { value: 'https://ciyuan.today/v1', label: 'https://ciyuan.today/v1', defaultModel: 'gpt-image-1.5' },
   ];
   const defaultCoverSettings = {
     cover_enabled: false,
