@@ -1,6 +1,4 @@
-import { navbar } from '@vuepress/theme-default'
-
-export const navbarConfig = navbar([
+export const navbarConfig = [
   { text: '指南', link: '/guide/' },
   { text: '后端', link: '/backend/' },
   { text: '前端', link: '/frontend/' },
@@ -12,4 +10,4 @@ export const navbarConfig = navbar([
       { text: 'GitHub', link: 'https://github.com/yucheng2/MuMuAINovel' },
     ],
   },
-])
+]

@@ -1,9 +1,11 @@
 import { defineUserConfig } from 'vuepress'
 import { defaultTheme } from '@vuepress/theme-default'
+import { viteBundler } from '@vuepress/bundler-vite'
 import { navbarConfig } from './configs/navbar'
 import { sidebarConfig } from './configs/sidebar'
 
 export default defineUserConfig({
+  bundler: viteBundler(),
   lang: 'zh-CN',
   title: 'MuMuAINovel',
   description: 'AI 智能小说创作助手',
