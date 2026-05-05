@@ -313,6 +313,7 @@ export default function SettingsPage() {
     { value: 'openai', label: 'OpenAI Compatible', defaultUrl: 'https://api.openai.com/v1' },
     // { value: 'anthropic', label: 'Anthropic (Claude)', defaultUrl: 'https://api.anthropic.com' },
     { value: 'gemini', label: 'Google Gemini', defaultUrl: 'https://generativelanguage.googleapis.com/v1beta' },
+    { value: 'minimax', label: 'MiniMax', defaultUrl: 'https://api.minimaxi.com/v1', defaultModel: 'MiniMax-M2.7-highspeed' },
   ];
 
   const selectedProvider = Form.useWatch('api_provider', form);
@@ -329,6 +330,10 @@ export default function SettingsPage() {
       if (provider.value === 'mumu') {
         nextValues.api_key = '';
         nextValues.llm_model = provider.defaultModel || 'gemini-3-flash-preview';
+      }
+      if (provider.value === 'minimax') {
+        nextValues.api_key = '';
+        nextValues.llm_model = provider.defaultModel || 'MiniMax-M2.7-highspeed';
       }
       form.setFieldsValue(nextValues);
     }
@@ -629,6 +634,10 @@ export default function SettingsPage() {
       if (provider.value === 'mumu') {
         nextValues.api_key = '';
         nextValues.llm_model = provider.defaultModel || 'gemini-3-flash-preview';
+      }
+      if (provider.value === 'minimax') {
+        nextValues.api_key = '';
+        nextValues.llm_model = provider.defaultModel || 'MiniMax-M2.7-highspeed';
       }
       presetForm.setFieldsValue(nextValues);
     }
