@@ -20,6 +20,7 @@ from app.services.ai_providers.anthropic_provider import AnthropicProvider
 from app.services.ai_providers.gemini_provider import GeminiProvider
 from app.services.ai_providers.base_provider import BaseAIProvider
 from app.services.json_helper import clean_json_response, parse_json
+from app.services.langchain_service import LangChainService
 
 # 导出清理函数
 cleanup_http_clients = cleanup_all_clients
@@ -29,7 +30,7 @@ logger = get_logger(__name__)
 
 def normalize_provider(provider: Optional[str]) -> Optional[str]:
     """标准化 provider 名称，兼容渠道别名。"""
-    if provider == "mumu":
+    if provider in ("mumu", "minimax", "ciyuan"):
         return "openai"
     return provider
 
@@ -87,6 +88,8 @@ class AIService:
         enable_mcp: bool = True,
     ):
         self.api_provider = normalize_provider(api_provider or app_settings.default_ai_provider)
+        self.api_key = api_key
+        self.api_base_url = api_base_url
         self.default_model = default_model or app_settings.default_model
         self.default_temperature = default_temperature or app_settings.default_temperature
         self.default_max_tokens = default_max_tokens or app_settings.default_max_tokens
@@ -123,11 +126,28 @@ class AIService:
             client = GeminiClient(api_key, api_base_url, self.config)
             self._gemini_provider = GeminiProvider(client)
 
+        # 初始化 LangChain 服务（用于结构化输出）
+        self._langchain_service: Optional[LangChainService] = None
+
+    @property
+    def langchain(self) -> LangChainService:
+        """获取 LangChain 服务实例（懒加载）"""
+        if self._langchain_service is None:
+            self._langchain_service = LangChainService(
+                api_key=self.api_key or "",
+                api_base_url=self.api_base_url or "",
+                default_model=self.default_model,
+                default_temperature=self.default_temperature,
+                default_max_tokens=self.default_max_tokens,
+                default_system_prompt=self.default_system_prompt,
+            )
+        return self._langchain_service
+
     @property
     def enable_mcp(self) -> bool:
         """是否启用MCP工具"""
         return self._enable_mcp
-    
+
     @enable_mcp.setter
     def enable_mcp(self, value: bool):
         """设置MCP启用状态，如果禁用则清理缓存"""
@@ -388,10 +408,11 @@ class AIService:
         auto_mcp: bool = True,
         handle_tool_calls: bool = True,
         mcp_max_rounds: Optional[int] = None,
+        response_format: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """
         生成文本（自动支持MCP工具）
-        
+
         Args:
             prompt: 用户提示词
             provider: AI提供商
@@ -404,14 +425,15 @@ class AIService:
             auto_mcp: 是否自动加载MCP工具（默认True）
             handle_tool_calls: 是否自动处理工具调用（默认True）
             mcp_max_rounds: 最大工具调用轮数（None使用默认值3）
-            
+            response_format: 响应格式（如 {"type": "json_object"}）
+
         Returns:
             包含生成内容的字典
         """
         # 使用全局配置的MCP轮数（如果未指定）
         if mcp_max_rounds is None:
             mcp_max_rounds = app_settings.mcp_max_rounds
-        
+
         # 自动加载MCP工具
         if auto_mcp and tools is None:
             tools = await self._prepare_mcp_tools(auto_mcp=auto_mcp)
@@ -423,9 +445,8 @@ class AIService:
             prompt=prompt,
             auto_mcp=auto_mcp,
             tools_count=len(tools) if tools else 0,
-            stream=False,
         )
-        
+
         try:
             prov = self._get_provider(provider)
             response = await prov.generate(
@@ -436,6 +457,7 @@ class AIService:
                 system_prompt=system_prompt or self.default_system_prompt,
                 tools=tools,
                 tool_choice=tool_choice,
+                response_format=response_format,
             )
             usage = TokenUsage.from_response(response)
             
@@ -580,10 +602,11 @@ class AIService:
         model: Optional[str] = None,
         expected_type: Optional[str] = None,
         auto_mcp: bool = True,
+        output_schema: Optional[Union[type, dict]] = None,
     ) -> Union[Dict, List]:
         """
         带重试的 JSON 调用（自动支持MCP工具）
-        
+
         Args:
             prompt: 用户提示词
             system_prompt: 系统提示词
@@ -594,10 +617,35 @@ class AIService:
             model: 模型名称
             expected_type: 期望的返回类型（"object"或"array"）
             auto_mcp: 是否自动加载MCP工具
-            
+            output_schema: 可选的 Pydantic 模型类或 JSON schema dict，
+                          如果提供则优先使用 LangChain structured output 强制 JSON 输出
+
         Returns:
             解析后的JSON数据
         """
+        # 如果提供了 output_schema，优先使用 LangChain structured output
+        if output_schema is not None:
+            try:
+                result = await self.call_with_structured_output(
+                    prompt=prompt,
+                    output_schema=output_schema,
+                    system_prompt=system_prompt,
+                    max_retries=max_retries,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    provider=provider,
+                    model=model,
+                )
+                # 转换为 dict 格式返回以保持兼容性
+                if hasattr(result, "model_dump"):
+                    return result.model_dump()
+                elif isinstance(result, dict):
+                    return result
+                return result
+            except Exception as e:
+                logger.warning(f"⚠️ LangChain structured output 失败，回退到传统方法: {e}")
+                # 继续使用传统方法
+
         last_response = ""
         aggregate_usage = TokenUsage()
         metrics = self._build_call_metrics(
@@ -607,13 +655,12 @@ class AIService:
             prompt=prompt,
             auto_mcp=auto_mcp,
             tools_count=0,
-            stream=False,
         )
-        
+
         try:
             for attempt in range(1, max_retries + 1):
                 current_prompt = prompt if attempt == 1 else self._add_json_hint(prompt, last_response, attempt)
-                
+
                 result = await self.generate_text(
                     prompt=current_prompt,
                     provider=provider,
@@ -623,6 +670,7 @@ class AIService:
                     system_prompt=system_prompt,
                     auto_mcp=auto_mcp,
                     handle_tool_calls=True,
+                    response_format={"type": "json_object"},
                 )
                 aggregate_usage.add(TokenUsage.from_response(result))
                 metrics.retry_count = attempt
@@ -669,6 +717,161 @@ class AIService:
     def _clean_json_response(text: str) -> str:
         """清洗 JSON 响应"""
         return clean_json_response(text)
+
+    async def call_with_structured_output(
+        self,
+        prompt: str,
+        output_schema: Union[type, dict],
+        system_prompt: Optional[str] = None,
+        max_retries: int = 3,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> Any:
+        """
+        使用 LangChain 的 structured output 强制 JSON 输出（不依赖 response_format 参数）。
+
+        此方法绕过了传统的 API 调用，直接使用 LangChain 的 with_structured_output
+        来确保模型返回正确格式的 JSON 数据。
+
+        Args:
+            prompt: 用户提示词
+            output_schema: Pydantic 模型类或 JSON schema dict
+            system_prompt: 系统提示词
+            max_retries: 最大重试次数
+            temperature: 温度
+            max_tokens: 最大令牌数
+            provider: AI提供商
+            model: 模型名称
+
+        Returns:
+            解析后的结构化数据
+        """
+        from langchain_openai import ChatOpenAI
+
+        resolved_provider = normalize_provider(provider or self.api_provider)
+        resolved_model = model or self.default_model
+        resolved_temp = temperature or self.default_temperature
+        resolved_max_tokens = max_tokens or self.default_max_tokens
+        resolved_base_url = self.api_base_url or ""
+
+        # 根据 provider 选择正确的配置
+        if resolved_provider == "anthropic":
+            # Anthropic 使用官方 SDK
+            from langchain_anthropic import ChatAnthropic
+            llm = ChatAnthropic(
+                model=resolved_model,
+                api_key=self.api_key,
+                temperature=resolved_temp,
+                max_tokens_to_sample=resolved_max_tokens,
+            )
+        elif resolved_provider == "gemini" and "generativelanguage.googleapis" in resolved_base_url:
+            # Gemini 官方接口
+            llm = ChatOpenAI(
+                model=resolved_model,
+                api_key=self.api_key,
+                base_url=resolved_base_url,
+                temperature=resolved_temp,
+                max_tokens=resolved_max_tokens,
+            )
+        else:
+            # OpenAI 兼容接口 (OpenAI, MuMu, CiYuan, MiniMax 等)
+            llm = ChatOpenAI(
+                model=resolved_model,
+                api_key=self.api_key,
+                base_url=resolved_base_url or "https://api.openai.com/v1",
+                temperature=resolved_temp,
+                max_tokens=resolved_max_tokens,
+            )
+
+        # 构建消息
+        messages = []
+        if system_prompt or self.default_system_prompt:
+            messages.append(("system", system_prompt or self.default_system_prompt))
+        messages.append(("human", prompt))
+
+        # 对于 MiniMax 等推理模型，with_structured_output 可能无法处理思考块，
+        # 所以我们直接调用 LLM 然后手动提取 JSON
+        import json as json_module
+        import re
+
+        def _strip_thinking(text: str) -> str:
+            """剥离思考块"""
+            pattern = r'<think>[\s\S]*?</think>'
+            return re.sub(pattern, '', text).strip()
+
+        def _extract_json(text: str):
+            """从文本中提取 JSON"""
+            # 剥离 markdown 代码块
+            text = re.sub(r'^```json\s*\n?', '', text, flags=re.MULTILINE | re.IGNORECASE)
+            text = re.sub(r'^```\s*\n?', '', text, flags=re.MULTILINE)
+            text = re.sub(r'\n?```\s*$', '', text, flags=re.MULTILINE)
+
+            # 查找 JSON 对象或数组的起始位置
+            match = re.search(r'[\[{]', text)
+            if not match:
+                return None
+
+            start_pos = match.start()
+            if start_pos > 0:
+                text = text[start_pos:]
+
+            # 尝试找到完整的 JSON
+            for end_offset in range(len(text), 0, -1):
+                try:
+                    candidate = text[:end_offset]
+                    data = json_module.loads(candidate)
+                    return data
+                except json_module.JSONDecodeError:
+                    continue
+            return None
+
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                # 首先尝试使用 with_structured_output
+                chain = llm.with_structured_output(output_schema)
+                result = await chain.ainvoke(messages)
+                logger.info(f"✅ LangChain structured output 成功 (尝试 {attempt}/{max_retries})")
+                return result
+            except Exception as e:
+                last_error = e
+                logger.warning(f"⚠️ LangChain structured output 失败 (尝试 {attempt}/{max_retries}): {e}")
+
+                # 如果 with_structured_output 失败，尝试直接调用并手动解析
+                # 这对于 MiniMax 等返回思考块的模型特别必要
+                try:
+                    response = await llm.ainvoke(messages)
+                    content = response.content if hasattr(response, "content") else str(response)
+                    content = _strip_thinking(content)
+
+                    # 尝试直接解析为 JSON
+                    try:
+                        data = json_module.loads(content)
+                    except json_module.JSONDecodeError:
+                        # 如果直接解析失败，尝试提取 JSON
+                        data = _extract_json(content)
+
+                    if data is None:
+                        raise ValueError("无法从响应中提取 JSON")
+
+                    # 如果 output_schema 是 Pydantic 模型，进行验证
+                    if isinstance(output_schema, type) and hasattr(output_schema, "model_validate"):
+                        result = output_schema.model_validate(data)
+                    else:
+                        result = data
+
+                    logger.info(f"✅ 手动 JSON 解析成功 (尝试 {attempt}/{max_retries})")
+                    return result
+                except Exception as inner_e:
+                    last_error = inner_e
+                    logger.warning(f"⚠️ 手动 JSON 解析也失败 (尝试 {attempt}/{max_retries}): {inner_e}")
+
+                if attempt < max_retries:
+                    continue
+
+        raise ValueError(f"LangChain structured output 全部失败: {last_error}")
 
 
 def create_user_ai_service(

@@ -26,6 +26,7 @@ class OpenAIClient(BaseAIClient):
         tools: Optional[list] = None,
         tool_choice: Optional[str] = None,
         stream: bool = False,
+        response_format: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         payload = {
             "model": model,
@@ -35,6 +36,8 @@ class OpenAIClient(BaseAIClient):
         }
         if stream:
             payload["stream"] = True
+        if response_format:
+            payload["response_format"] = response_format
         if tools:
             # 清理 $schema 字段
             cleaned = []
@@ -58,8 +61,9 @@ class OpenAIClient(BaseAIClient):
         max_tokens: int,
         tools: Optional[list] = None,
         tool_choice: Optional[str] = None,
+        response_format: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        payload = self._build_payload(messages, model, temperature, max_tokens, tools, tool_choice)
+        payload = self._build_payload(messages, model, temperature, max_tokens, tools, tool_choice, response_format=response_format)
         
         logger.debug(f"📤 OpenAI 请求 payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
         
@@ -94,17 +98,18 @@ class OpenAIClient(BaseAIClient):
         max_tokens: int,
         tools: Optional[list] = None,
         tool_choice: Optional[str] = None,
+        response_format: Optional[Dict[str, str]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         流式生成，支持工具调用
-        
+
         Yields:
             Dict with keys:
             - content: str - 文本内容块
             - tool_calls: list - 工具调用列表（如果有）
             - done: bool - 是否结束
         """
-        payload = self._build_payload(messages, model, temperature, max_tokens, tools, tool_choice, stream=True)
+        payload = self._build_payload(messages, model, temperature, max_tokens, tools, tool_choice, stream=True, response_format=response_format)
         
         tool_calls_buffer = {}  # 收集工具调用块
         

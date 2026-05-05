@@ -28,6 +28,7 @@ class AnthropicClient:
         system_prompt: Optional[str] = None,
         tools: Optional[list] = None,
         tool_choice: Optional[str] = None,
+        response_format: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         kwargs = {
             "model": model,
@@ -82,6 +83,7 @@ class AnthropicClient:
         system_prompt: Optional[str] = None,
         tools: Optional[list] = None,
         tool_choice: Optional[str] = None,
+        response_format: Optional[Dict[str, str]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         流式生成，支持工具调用

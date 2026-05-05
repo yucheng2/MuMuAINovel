@@ -11,6 +11,25 @@ class CareerStage(BaseModel):
     description: Optional[str] = Field(None, description="阶段描述")
 
 
+class AICareerOutput(BaseModel):
+    """AI生成的职业输出（用于 LangChain structured output）"""
+    name: str = Field(..., description="职业名称")
+    description: Optional[str] = Field(None, description="职业描述（100-150字）")
+    category: Optional[str] = Field(None, description="职业分类")
+    stages: Optional[List[CareerStage]] = Field(default_factory=list, description="职业阶段列表")
+    max_stage: int = Field(10, description="最大阶段数")
+    requirements: Optional[str] = Field(None, description="职业要求和前置条件")
+    special_abilities: Optional[str] = Field(None, description="职业特殊能力")
+    worldview_rules: Optional[str] = Field(None, description="与世界观规则的关联")
+    attribute_bonuses: Optional[Dict[str, str]] = Field(None, description="属性加成，如 {\"strength\": \"+10%\"}")
+
+
+class AICareerSystemOutput(BaseModel):
+    """AI生成的完整职业体系输出（用于 LangChain structured output）"""
+    main_careers: List[AICareerOutput] = Field(..., description="主职业列表")
+    sub_careers: List[AICareerOutput] = Field(..., description="副职业列表")
+
+
 class CareerBase(BaseModel):
     """职业基础模型"""
     name: str = Field(..., description="职业名称")

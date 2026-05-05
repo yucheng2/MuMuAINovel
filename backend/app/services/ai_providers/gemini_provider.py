@@ -21,6 +21,7 @@ class GeminiProvider(BaseAIProvider):
         system_prompt: Optional[str] = None,
         tools: Optional[List[Dict]] = None,
         tool_choice: Optional[str] = None,
+        response_format: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         messages = [{"role": "user", "content": prompt}]
         return await self.client.chat_completion(
@@ -31,6 +32,7 @@ class GeminiProvider(BaseAIProvider):
             system_prompt=system_prompt,
             tools=tools,
             tool_choice=tool_choice,
+            response_format=response_format,
         )
 
     async def generate_stream(
@@ -43,6 +45,7 @@ class GeminiProvider(BaseAIProvider):
         tools: Optional[List[Dict]] = None,
         tool_choice: Optional[str] = None,
         user_id: Optional[str] = None,
+        response_format: Optional[Dict[str, str]] = None,
     ) -> AsyncGenerator[str, None]:
         # 如果有工具，使用真正的流式工具调用
         if tools:
@@ -60,6 +63,7 @@ class GeminiProvider(BaseAIProvider):
                 system_prompt=system_prompt,
                 tools=tools,
                 tool_choice=actual_tool_choice,
+                response_format=response_format,
             ):
                 # 检查是否有工具调用
                 if chunk.get("tool_calls"):
@@ -108,6 +112,7 @@ class GeminiProvider(BaseAIProvider):
             temperature=temperature,
             max_tokens=max_tokens,
             system_prompt=system_prompt,
+            response_format=response_format,
         ):
             if isinstance(chunk, dict):
                 if chunk.get("usage"):

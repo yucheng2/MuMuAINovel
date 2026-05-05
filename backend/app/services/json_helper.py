@@ -383,6 +383,9 @@ def clean_json_response(text: str) -> str:
             logger.warning("⚠️ clean_json_response: 输入为空")
             return text
         
+        # 首先剥离思考块（MiniMax 等推理模型会返回 <think>...</think>）
+        text = re.sub(r'<think>[\s\S]*?</think>', '', text)
+
         original_length = len(text)
         logger.debug(f"🔍 开始清洗JSON，原始长度: {original_length}")
         

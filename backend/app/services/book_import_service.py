@@ -42,6 +42,7 @@ from app.schemas.book_import import (
     BookImportWarning,
     ProjectSuggestion,
 )
+from app.schemas.career import AICareerSystemOutput
 from app.services.ai_service import AIService, create_user_ai_service_with_mcp
 from app.services.prompt_service import PromptService
 from app.services.txt_parser_service import txt_parser_service
@@ -1774,6 +1775,7 @@ class BookImportService:
             prompt=prompt,
             max_retries=3,
             expected_type="object",
+            output_schema=AICareerSystemOutput,
         )
 
         await _notify("💼 正在解析职业数据...", 0.7)

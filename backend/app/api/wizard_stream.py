@@ -17,6 +17,7 @@ from app.models.writing_style import WritingStyle
 from app.models.project_default_style import ProjectDefaultStyle
 from app.services.ai_service import AIService
 from app.services.json_helper import loads_json
+from app.schemas.career import AICareerSystemOutput
 from app.services.prompt_service import prompt_service, PromptService
 from app.services.plot_expansion_service import PlotExpansionService
 from app.logger import get_logger
@@ -389,169 +390,178 @@ async def career_system_generator(
                     retry_count=career_retry_count,
                     max_retries=MAX_CAREER_RETRIES
                 )
-                
-                # 使用流式生成职业体系
-                career_response = ""
-                chunk_count = 0
-                
-                async for chunk in user_ai_service.generate_text_stream(
-                    prompt=career_prompt,
-                    provider=provider,
-                    model=model,
-                ):
-                    chunk_count += 1
-                    career_response += chunk
-                    
-                    # 发送内容块
-                    yield await tracker.generating_chunk(chunk)
-                    
-                    # 定期更新进度
-                    current_len = len(career_response)
-                    if chunk_count % 10 == 0:
-                        yield await tracker.generating(
-                            current_chars=current_len,
-                            estimated_total=estimated_total,
-                            retry_count=career_retry_count,
-                            max_retries=MAX_CAREER_RETRIES
-                        )
-                    
-                    # 每20个块发送心跳
-                    if chunk_count % 20 == 0:
-                        yield await tracker.heartbeat()
-                
-                if not career_response or not career_response.strip():
-                    logger.warning(f"⚠️ AI返回空职业体系（尝试{career_retry_count+1}/{MAX_CAREER_RETRIES}）")
-                    career_retry_count += 1
-                    if career_retry_count < MAX_CAREER_RETRIES:
-                        yield await tracker.retry(career_retry_count, MAX_CAREER_RETRIES, "AI返回为空")
-                        continue
-                    else:
-                        yield await tracker.error("职业体系生成失败（AI多次返回为空）")
-                        return
-                
-                yield await tracker.parsing("解析职业体系数据...")
-                
-                # 清洗并解析JSON
+
+                # 使用 LangChain structured output 生成职业体系
                 try:
+                    career_result = await user_ai_service.call_with_structured_output(
+                        prompt=career_prompt,
+                        output_schema=AICareerSystemOutput,
+                        provider=provider,
+                        model=model,
+                        max_retries=MAX_CAREER_RETRIES - career_retry_count,
+                    )
+                    # 转换为 dict 格式
+                    if hasattr(career_result, "model_dump"):
+                        career_data = career_result.model_dump()
+                    elif hasattr(career_result, "model_dump_json"):
+                        import json as json_module
+                        career_data = json_module.loads(career_result.model_dump_json())
+                    else:
+                        career_data = career_result
+                    logger.info(f"✅ 职业体系 LangChain structured output 成功")
+                except Exception as e:
+                    logger.error(f"❌ LangChain structured output 失败: {e}，尝试使用传统方法")
+                    # 回退到传统流式方法
+                    career_response = ""
+                    chunk_count = 0
+
+                    async for chunk in user_ai_service.generate_text_stream(
+                        prompt=career_prompt,
+                        provider=provider,
+                        model=model,
+                    ):
+                        chunk_count += 1
+                        career_response += chunk
+
+                        # 发送内容块
+                        yield await tracker.generating_chunk(chunk)
+
+                        # 定期更新进度
+                        current_len = len(career_response)
+                        if chunk_count % 10 == 0:
+                            yield await tracker.generating(
+                                current_chars=current_len,
+                                estimated_total=estimated_total,
+                                retry_count=career_retry_count,
+                                max_retries=MAX_CAREER_RETRIES
+                            )
+
+                        # 每20个块发送心跳
+                        if chunk_count % 20 == 0:
+                            yield await tracker.heartbeat()
+
+                    if not career_response or not career_response.strip():
+                        logger.warning(f"⚠️ AI返回空职业体系（尝试{career_retry_count+1}/{MAX_CAREER_RETRIES}）")
+                        career_retry_count += 1
+                        if career_retry_count < MAX_CAREER_RETRIES:
+                            yield await tracker.retry(career_retry_count, MAX_CAREER_RETRIES, "AI返回为空")
+                            continue
+                        else:
+                            yield await tracker.error("职业体系生成失败（AI多次返回为空）")
+                            return
+
+                    yield await tracker.parsing("解析职业体系数据...")
+
+                    # 清洗并解析JSON
                     cleaned_response = user_ai_service._clean_json_response(career_response)
                     career_data = loads_json(cleaned_response)
                     logger.info(f"✅ 职业体系JSON解析成功（尝试{career_retry_count+1}/{MAX_CAREER_RETRIES}）")
-                    
-                    yield await tracker.saving("保存职业数据...")
-                    
-                    # 保存主职业
-                    main_careers_created = []
-                    for idx, career_info in enumerate(career_data.get("main_careers", [])):
-                        try:
-                            stages_json = json.dumps(career_info.get("stages", []), ensure_ascii=False)
-                            attribute_bonuses = career_info.get("attribute_bonuses")
-                            attribute_bonuses_json = json.dumps(attribute_bonuses, ensure_ascii=False) if attribute_bonuses else None
-                            
-                            career = Career(
-                                project_id=project.id,
-                                name=career_info.get("name", f"未命名主职业{idx+1}"),
-                                type="main",
-                                description=career_info.get("description"),
-                                category=career_info.get("category"),
-                                stages=stages_json,
-                                max_stage=career_info.get("max_stage", 10),
-                                requirements=career_info.get("requirements"),
-                                special_abilities=career_info.get("special_abilities"),
-                                worldview_rules=career_info.get("worldview_rules"),
-                                attribute_bonuses=attribute_bonuses_json,
-                                source="ai"
-                            )
-                            db.add(career)
-                            await db.flush()
-                            main_careers_created.append(career.name)
-                            logger.info(f"  ✅ 创建主职业：{career.name}")
-                        except Exception as e:
-                            logger.error(f"  ❌ 创建主职业失败：{str(e)}")
-                            continue
-                    
-                    # 保存副职业
-                    sub_careers_created = []
-                    for idx, career_info in enumerate(career_data.get("sub_careers", [])):
-                        try:
-                            stages_json = json.dumps(career_info.get("stages", []), ensure_ascii=False)
-                            attribute_bonuses = career_info.get("attribute_bonuses")
-                            attribute_bonuses_json = json.dumps(attribute_bonuses, ensure_ascii=False) if attribute_bonuses else None
-                            
-                            career = Career(
-                                project_id=project.id,
-                                name=career_info.get("name", f"未命名副职业{idx+1}"),
-                                type="sub",
-                                description=career_info.get("description"),
-                                category=career_info.get("category"),
-                                stages=stages_json,
-                                max_stage=career_info.get("max_stage", 5),
-                                requirements=career_info.get("requirements"),
-                                special_abilities=career_info.get("special_abilities"),
-                                worldview_rules=career_info.get("worldview_rules"),
-                                attribute_bonuses=attribute_bonuses_json,
-                                source="ai"
-                            )
-                            db.add(career)
-                            await db.flush()
-                            sub_careers_created.append(career.name)
-                            logger.info(f"  ✅ 创建副职业：{career.name}")
-                        except Exception as e:
-                            logger.error(f"  ❌ 创建副职业失败：{str(e)}")
-                            continue
-                    
-                    # 更新向导步骤状态为2（职业体系已完成）
-                    # wizard_step: 0=未开始, 1=世界观已完成, 2=职业体系已完成, 3=角色已完成, 4=大纲已完成
-                    project.wizard_step = 2
-                    
-                    await db.commit()
-                    db_committed = True
-                    
-                    # 标记成功
-                    career_generation_success = True
-                    logger.info(f"🎉 职业体系生成完成：主职业{len(main_careers_created)}个，副职业{len(sub_careers_created)}个")
-                    
-                    yield await tracker.complete()
-                    
-                    # 发送结果
-                    yield await tracker.result({
-                        "project_id": project.id,
-                        "main_careers_count": len(main_careers_created),
-                        "sub_careers_count": len(sub_careers_created),
-                        "main_careers": main_careers_created,
-                        "sub_careers": sub_careers_created
-                    })
-                    
-                    yield await tracker.done()
-                    
-                except json.JSONDecodeError as e:
-                    logger.error(f"❌ 职业体系JSON解析失败（尝试{career_retry_count+1}/{MAX_CAREER_RETRIES}）: {e}")
-                    career_retry_count += 1
-                    if career_retry_count < MAX_CAREER_RETRIES:
-                        yield await tracker.retry(career_retry_count, MAX_CAREER_RETRIES, "JSON解析失败")
+
+                yield await tracker.saving("保存职业数据...")
+
+                # 保存主职业
+                main_careers_created = []
+                for idx, career_info in enumerate(career_data.get("main_careers", [])):
+                    try:
+                        stages_json = json.dumps(career_info.get("stages", []), ensure_ascii=False)
+                        attribute_bonuses = career_info.get("attribute_bonuses")
+                        attribute_bonuses_json = json.dumps(attribute_bonuses, ensure_ascii=False) if attribute_bonuses else None
+
+                        career = Career(
+                            project_id=project.id,
+                            name=career_info.get("name", f"未命名主职业{idx+1}"),
+                            type="main",
+                            description=career_info.get("description"),
+                            category=career_info.get("category"),
+                            stages=stages_json,
+                            max_stage=career_info.get("max_stage", 10),
+                            requirements=career_info.get("requirements"),
+                            special_abilities=career_info.get("special_abilities"),
+                            worldview_rules=career_info.get("worldview_rules"),
+                            attribute_bonuses=attribute_bonuses_json,
+                            source="ai"
+                        )
+                        db.add(career)
+                        await db.flush()
+                        main_careers_created.append(career.name)
+                        logger.info(f"  ✅ 创建主职业：{career.name}")
+                    except Exception as e:
+                        logger.error(f"  ❌ 创建主职业失败：{str(e)}")
                         continue
-                    else:
-                        yield await tracker.error("职业体系解析失败（已达最大重试次数）")
-                        return
-                except Exception as e:
-                    logger.error(f"❌ 职业体系保存失败（尝试{career_retry_count+1}/{MAX_CAREER_RETRIES}）: {e}")
-                    career_retry_count += 1
-                    if career_retry_count < MAX_CAREER_RETRIES:
-                        yield await tracker.retry(career_retry_count, MAX_CAREER_RETRIES, "保存失败")
+
+                # 保存副职业
+                sub_careers_created = []
+                for idx, career_info in enumerate(career_data.get("sub_careers", [])):
+                    try:
+                        stages_json = json.dumps(career_info.get("stages", []), ensure_ascii=False)
+                        attribute_bonuses = career_info.get("attribute_bonuses")
+                        attribute_bonuses_json = json.dumps(attribute_bonuses, ensure_ascii=False) if attribute_bonuses else None
+
+                        career = Career(
+                            project_id=project.id,
+                            name=career_info.get("name", f"未命名副职业{idx+1}"),
+                            type="sub",
+                            description=career_info.get("description"),
+                            category=career_info.get("category"),
+                            stages=stages_json,
+                            max_stage=career_info.get("max_stage", 5),
+                            requirements=career_info.get("requirements"),
+                            special_abilities=career_info.get("special_abilities"),
+                            worldview_rules=career_info.get("worldview_rules"),
+                            attribute_bonuses=attribute_bonuses_json,
+                            source="ai"
+                        )
+                        db.add(career)
+                        await db.flush()
+                        sub_careers_created.append(career.name)
+                        logger.info(f"  ✅ 创建副职业：{career.name}")
+                    except Exception as e:
+                        logger.error(f"  ❌ 创建副职业失败：{str(e)}")
                         continue
-                    else:
-                        yield await tracker.error("职业体系保存失败（已达最大重试次数）")
-                        return
-            
-            except Exception as e:
-                logger.error(f"❌ 职业体系生成异常（尝试{career_retry_count+1}/{MAX_CAREER_RETRIES}）: {e}")
+
+                # 更新向导步骤状态为2（职业体系已完成）
+                # wizard_step: 0=未开始, 1=世界观已完成, 2=职业体系已完成, 3=角色已完成, 4=大纲已完成
+                project.wizard_step = 2
+
+                await db.commit()
+                db_committed = True
+
+                # 标记成功
+                career_generation_success = True
+                logger.info(f"🎉 职业体系生成完成：主职业{len(main_careers_created)}个，副职业{len(sub_careers_created)}个")
+
+                yield await tracker.complete()
+
+                # 发送结果
+                yield await tracker.result({
+                    "project_id": project.id,
+                    "main_careers_count": len(main_careers_created),
+                    "sub_careers_count": len(sub_careers_created),
+                    "main_careers": main_careers_created,
+                    "sub_careers": sub_careers_created
+                })
+
+                yield await tracker.done()
+
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ 职业体系JSON解析失败（尝试{career_retry_count+1}/{MAX_CAREER_RETRIES}）: {e}")
                 career_retry_count += 1
                 if career_retry_count < MAX_CAREER_RETRIES:
-                    yield await tracker.retry(career_retry_count, MAX_CAREER_RETRIES, "生成异常")
+                    yield await tracker.retry(career_retry_count, MAX_CAREER_RETRIES, "JSON解析失败")
                     continue
                 else:
-                    yield await tracker.error(f"职业体系生成失败: {str(e)}")
+                    yield await tracker.error("职业体系解析失败（已达最大重试次数）")
                     return
-        
+            except Exception as e:
+                logger.error(f"❌ 职业体系保存失败（尝试{career_retry_count+1}/{MAX_CAREER_RETRIES}）: {e}")
+                career_retry_count += 1
+                if career_retry_count < MAX_CAREER_RETRIES:
+                    yield await tracker.retry(career_retry_count, MAX_CAREER_RETRIES, "保存失败")
+                    continue
+                else:
+                    yield await tracker.error("职业体系保存失败（已达最大重试次数）")
+                    return
+
     except GeneratorExit:
         logger.warning("职业体系生成器被提前关闭")
         if not db_committed and db.in_transaction():
