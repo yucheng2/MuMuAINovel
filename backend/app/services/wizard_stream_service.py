@@ -110,14 +110,7 @@ class WizardStreamService:
                     if world_retry_count < MAX_WORLD_RETRIES:
                         continue
                     else:
-                        world_data = {
-                            "time_period": "AI多次返回为空，请稍后重试",
-                            "location": "AI多次返回为空，请稍后重试",
-                            "atmosphere": "AI多次返回为空，请稍后重试",
-                            "rules": "AI多次返回为空，请稍后重试"
-                        }
-                        world_generation_success = True
-                        break
+                        raise ValueError("世界观生成失败（AI多次返回为空）")
 
                 # 解析结果
                 try:
@@ -130,13 +123,7 @@ class WizardStreamService:
                     if world_retry_count < MAX_WORLD_RETRIES:
                         continue
                     else:
-                        world_data = {
-                            "time_period": "AI返回格式错误，请重试",
-                            "location": "AI返回格式错误，请重试",
-                            "atmosphere": "AI返回格式错误，请重试",
-                            "rules": "AI返回格式错误，请重试"
-                        }
-                        world_generation_success = True
+                        raise ValueError("世界观生成失败（JSON解析错误）")
 
             except Exception as e:
                 logger.error(f"世界构建生成异常（尝试{world_retry_count+1}/{MAX_WORLD_RETRIES}）: {type(e).__name__}: {e}")
@@ -415,8 +402,10 @@ class WizardStreamService:
         requirements = data.get("requirements", "")
         provider = data.get("provider")
         model = data.get("model")
-        enable_mcp = data.get("enable_mcp", True)
         user_id = data.get("user_id")
+
+        if not project_id:
+            raise ValueError("project_id 是必需的参数")
 
         # 验证项目
         project = await self.get_owned_project(project_id, user_id)
