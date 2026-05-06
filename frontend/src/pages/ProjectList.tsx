@@ -10,6 +10,7 @@ import type { ReactNode } from 'react';
 import type { Project, User } from '../types';
 import UserMenu from '../components/UserMenu';
 import ChangelogFloatingButton from '../components/ChangelogFloatingButton';
+import FloatingTaskPanel from '../components/FloatingTaskPanel';
 import ThemeSwitch from '../components/ThemeSwitch';
 import { useThemeMode } from '../theme/useThemeMode';
 import SettingsPage from './Settings';
@@ -1058,6 +1059,9 @@ export default function ProjectList() {
             </div>
          </Space>
       </Modal>
+
+      {/* 后台任务浮窗 */}
+      <FloatingTaskPanel />
 
     </div>
   );
