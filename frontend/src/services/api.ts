@@ -974,6 +974,20 @@ export const inspirationApi = {
     }>('/inspiration/quick-generate', data),
 };
 
+export const inspirationBackgroundApi = {
+  createBackgroundTask: async (data: {
+    title: string;
+    description: string;
+    theme: string;
+    genre: string;
+    narrative_perspective: string;
+    outline_mode: string;
+  }) => {
+    const response = await axios.post('/api/inspiration/background', data);
+    return response.data;
+  },
+};
+
 export default api;
 
 
