@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Input, Button, Space, Typography, message, Spin, Modal, theme } from 'antd';
 import { SendOutlined, ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons';
-import { inspirationApi } from '../services/api';
+import { inspirationApi, inspirationBackgroundApi } from '../services/api';
 import { AIProjectGenerator, type GenerationConfig, type AIProjectGeneratorRef } from '../components/AIProjectGenerator';
 
 const { Title, Text, Paragraph } = Typography;
@@ -524,7 +524,7 @@ const Inspiration: React.FC = () => {
       const aiMessage: Message = {
         type: 'ai',
         content: summary,
-        options: ['✅ 确认创建', '🔄 重新开始']
+        options: ['✅ 确认创建', '🔄 后台创建', '🔄 重新开始']
       };
       setMessages(prev => [...prev, aiMessage]);
       setCurrentStep('confirm');
@@ -563,6 +563,24 @@ const Inspiration: React.FC = () => {
         };
         setGenerationConfig(config);
         setCurrentStep('generating');
+        return;
+      } else if (option === '🔄 后台创建') {
+        // 调用后台创建 API
+        try {
+          const data = wizardData as WizardData;
+          await inspirationBackgroundApi.createBackgroundTask({
+            title: data.title,
+            description: data.description,
+            theme: data.theme,
+            genre: data.genre,
+            narrative_perspective: data.narrative_perspective,
+            outline_mode: data.outline_mode,
+          });
+          message.success('已在后台开始生成，请稍后查看');
+          window.location.href = 'http://localhost:8888';
+        } catch {
+          message.error('创建失败，请重试');
+        }
         return;
       } else if (option === '🔄 重新开始') {
         handleRestart();
