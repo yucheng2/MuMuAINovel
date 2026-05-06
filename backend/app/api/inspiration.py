@@ -18,6 +18,11 @@ from app.logger import get_logger
 router = APIRouter(prefix="/inspiration", tags=["灵感模式后台任务"])
 logger = get_logger(__name__)
 
+# Default values for inspiration mode
+DEFAULT_TARGET_WORDS = 100000
+DEFAULT_CHAPTER_COUNT = 3
+DEFAULT_CHARACTER_COUNT = 5
+
 
 class InspirationBackgroundRequest(BaseModel):
     title: str
@@ -54,37 +59,40 @@ async def _run_inspiration_bg(task_id: str, user_id: str, db: AsyncSession, task
             theme=task_input["theme"],
             genre=task_input["genre"],
             narrative_perspective=task_input["narrative_perspective"],
-            target_words=100000,
-            chapter_count=3,
-            character_count=5,
+            target_words=DEFAULT_TARGET_WORDS,
+            chapter_count=DEFAULT_CHAPTER_COUNT,
+            character_count=DEFAULT_CHARACTER_COUNT,
             outline_mode=task_input["outline_mode"],
         )
         project_id = world_result["project_id"]
 
         await tracker.loading("世界观生成完成", 0.25)
+        tracker.check_cancelled()
 
         # 阶段2: 职业体系 (25-50%)
         await tracker.loading("生成职业体系中...", 0.3)
         await service.generate_career_system(project_id=project_id, user_id=user_id)
         await tracker.loading("职业体系生成完成", 0.5)
+        tracker.check_cancelled()
 
         # 阶段3: 角色生成 (50-75%)
         await tracker.loading("生成角色中...", 0.55)
         await service.generate_characters(
             project_id=project_id,
             user_id=user_id,
-            count=5,
+            count=DEFAULT_CHARACTER_COUNT,
         )
         await tracker.loading("角色生成完成", 0.75)
+        tracker.check_cancelled()
 
         # 阶段4: 大纲生成 (75-100%)
         await tracker.loading("生成大纲中...", 0.8)
         await service.generate_outline(
             project_id=project_id,
             user_id=user_id,
-            chapter_count=3,
+            chapter_count=DEFAULT_CHAPTER_COUNT,
             narrative_perspective=task_input["narrative_perspective"],
-            target_words=100000,
+            target_words=DEFAULT_TARGET_WORDS,
         )
         await tracker.loading("大纲生成完成", 0.95)
 
