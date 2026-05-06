@@ -63,7 +63,6 @@ class WizardStreamService:
         outline_mode = data.get("outline_mode", "one-to-many")
         provider = data.get("provider")
         model = data.get("model")
-        enable_mcp = data.get("enable_mcp", True)
         user_id = data.get("user_id")
 
         if not title or not description or not theme or not genre:
