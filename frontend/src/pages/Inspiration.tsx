@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Card, Input, Button, Space, Typography, message, Spin, Modal, theme } from 'antd';
 import { SendOutlined, ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons';
 import { inspirationApi } from '../services/api';
-import { AIProjectGenerator, type GenerationConfig } from '../components/AIProjectGenerator';
+import { AIProjectGenerator, type GenerationConfig, type AIProjectGeneratorRef } from '../components/AIProjectGenerator';
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -91,6 +91,8 @@ const Inspiration: React.FC = () => {
   // 滚动容器引用
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  // AIProjectGenerator 引用
+  const generatorRef = useRef<AIProjectGeneratorRef>(null);
 
   // 记录上次失败的请求参数，用于重试
   const [lastFailedRequest, setLastFailedRequest] = useState<{
@@ -225,6 +227,13 @@ const Inspiration: React.FC = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // 进入生成阶段时，手动触发项目创建
+  useEffect(() => {
+    if (currentStep === 'generating' && generationConfig && generatorRef.current) {
+      generatorRef.current.startGeneration(generationConfig);
+    }
+  }, [currentStep, generationConfig]);
 
   // 重试生成
   const handleRetry = async () => {
@@ -1186,11 +1195,13 @@ const Inspiration: React.FC = () => {
           currentStep === 'outline_mode' || currentStep === 'confirm') && renderChat()}
         {(currentStep === 'generating' || currentStep === 'complete') && generationConfig && (
           <AIProjectGenerator
+            ref={generatorRef}
             config={generationConfig}
             storagePrefix="inspiration"
             onComplete={handleComplete}
             onBack={handleBackToChat}
             isMobile={isMobile}
+            manualStart={true}
           />
         )}
       </div>

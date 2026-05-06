@@ -14,6 +14,7 @@ import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
 import ChapterReader from '../components/ChapterReader';
 import PartialRegenerateToolbar from '../components/PartialRegenerateToolbar';
 import PartialRegenerateModal from '../components/PartialRegenerateModal';
+import { stripThinkingBlocks } from '../utils/textUtils';
 
 const { TextArea } = Input;
 
@@ -525,6 +526,12 @@ export default function Chapters() {
       if (data.has_active_task && data.task) {
         const task = data.task;
 
+        // 只对进行中的任务恢复轮询，已完成/失败/取消的任务不需要
+        if (task.status !== 'pending' && task.status !== 'running') {
+          // 任务已结束，不需要恢复
+          return;
+        }
+
         // 恢复任务状态（只在顶部进度条显示，不弹出Modal）
         setBatchTaskId(task.batch_id);
         setBatchProgress({
@@ -536,8 +543,9 @@ export default function Chapters() {
         setBatchGenerating(true);
         // 不设置 setBatchGenerateVisible(true)，避免弹出Modal遮挡页面
 
+        // TODO: 暂时禁用轮询
         // 启动轮询
-        startBatchPolling(task.batch_id);
+        // startBatchPolling(task.batch_id);
 
         message.info('检测到未完成的批量生成任务，请查看任务列表');
       }
@@ -843,6 +851,15 @@ export default function Chapters() {
         selectedModel,  // 传递选中的模型
         temporaryNarrativePerspective  // 传递临时人称参数
       );
+
+      if (result?.content) {
+        const cleanContent = stripThinkingBlocks(result.content);
+        if (cleanContent !== result.content) {
+          editorForm.setFieldsValue({ content: cleanContent });
+          result.content = cleanContent;
+        }
+      }
+
 
       message.success('AI创作成功，正在分析章节内容...');
 
@@ -1191,7 +1208,8 @@ export default function Chapters() {
       );
 
       // 开始轮询任务状态
-      startBatchPolling(result.batch_id);
+      // TODO: 暂时禁用轮询
+      // startBatchPolling(result.batch_id);
 
     } catch (error: unknown) {
       const err = error as Error;
@@ -1201,8 +1219,9 @@ export default function Chapters() {
     }
   };
 
-  // 轮询批量生成任务状态
-  const startBatchPolling = (taskId: string) => {
+  // 轮询批量生成任务状态（暂时禁用）
+  // @ts-ignore - temporarily disabled
+  const _startBatchPolling = (taskId: string) => {
     if (batchPollingIntervalRef.current) {
       clearInterval(batchPollingIntervalRef.current);
     }
@@ -1226,10 +1245,14 @@ export default function Chapters() {
           const latestChapters = await refreshChapters();
           await loadAnalysisTasks(latestChapters);
 
-          // 刷新项目信息以实时更新总字数统计
+          // 刷新项目信息以实时更新总字数统计（只更新必要的字段，避免触发不必要的重新渲染）
           if (currentProject?.id) {
             const updatedProject = await projectApi.getProject(currentProject.id);
-            setCurrentProject(updatedProject);
+            // 只在字数统计数据变化时才更新，避免触发 useEffect 循环
+            if (currentProject.current_words !== updatedProject.current_words ||
+                currentProject.chapter_count !== updatedProject.chapter_count) {
+              setCurrentProject(updatedProject);
+            }
           }
         }
 
@@ -1247,10 +1270,14 @@ export default function Chapters() {
           const finalChapters = await refreshChapters();
           await loadAnalysisTasks(finalChapters);
 
-          // 刷新项目信息以更新总字数统计
+          // 刷新项目信息以更新总字数统计（只更新必要的字段，避免触发不必要的重新渲染）
           if (currentProject?.id) {
             const updatedProject = await projectApi.getProject(currentProject.id);
-            setCurrentProject(updatedProject);
+            // 只在字数统计数据变化时才更新，避免触发 useEffect 循环
+            if (currentProject.current_words !== updatedProject.current_words ||
+                currentProject.chapter_count !== updatedProject.chapter_count) {
+              setCurrentProject(updatedProject);
+            }
           }
 
           if (status.status === 'completed') {

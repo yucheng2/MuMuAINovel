@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Button, Space, Typography, message, Progress, theme } from 'antd';
 import { CheckCircleOutlined, LoadingOutlined } from '@ant-design/icons';
@@ -19,6 +19,10 @@ export interface GenerationConfig {
   outline_mode?: 'one-to-one' | 'one-to-many';  // 大纲章节模式
 }
 
+export interface AIProjectGeneratorRef {
+  startGeneration: (cfg: GenerationConfig) => Promise<void>;
+}
+
 interface AIProjectGeneratorProps {
   config: GenerationConfig;
   storagePrefix: 'wizard' | 'inspiration';
@@ -26,6 +30,8 @@ interface AIProjectGeneratorProps {
   onBack?: () => void;
   isMobile?: boolean;
   resumeProjectId?: string;
+  /** 默认 true，设为 false 则 useEffect 自动触发（恢复场景） */
+  manualStart?: boolean;
 }
 
 type GenerationStep = 'pending' | 'processing' | 'completed' | 'error';
@@ -45,13 +51,14 @@ interface WorldBuildingResult {
   rules: string;
 }
 
-export const AIProjectGenerator: React.FC<AIProjectGeneratorProps> = ({
+export const AIProjectGenerator = forwardRef<AIProjectGeneratorRef, AIProjectGeneratorProps>(({
   config,
   storagePrefix,
   onComplete,
   isMobile = false,
-  resumeProjectId
-}) => {
+  resumeProjectId,
+  manualStart = true
+}, ref) => {
   const navigate = useNavigate();
   const { token } = theme.useToken();
   const alphaColor = (color: string, alpha: number) =>
@@ -104,17 +111,23 @@ export const AIProjectGenerator: React.FC<AIProjectGeneratorProps> = ({
 
   // 开始自动化生成流程
   useEffect(() => {
-    if (config) {
-      if (resumeProjectId) {
-        // 恢复生成模式
-        handleResumeGenerate(config, resumeProjectId);
-      } else {
-        // 新建项目模式
-        handleAutoGenerate(config);
-      }
+    if (!config || manualStart) {
+      return;
+    }
+    if (resumeProjectId) {
+      // 恢复生成模式
+      handleResumeGenerate(config, resumeProjectId);
+    } else {
+      // 新建项目模式
+      handleAutoGenerate(config);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config, resumeProjectId]);
+  }, [config, resumeProjectId, manualStart]);
+
+  // 手动触发生成（供外部 ref 调用）
+  const startGeneration = useCallback(async (cfg: GenerationConfig) => {
+    await handleAutoGenerate(cfg);
+  }, []);
 
   // 恢复未完成项目的生成
   const handleResumeGenerate = async (data: GenerationConfig, projectIdParam: string) => {
@@ -1337,5 +1350,10 @@ export const AIProjectGenerator: React.FC<AIProjectGeneratorProps> = ({
     </div>
   );
 
+  // 暴露方法给外部调用
+  useImperativeHandle(ref, () => ({
+    startGeneration
+  }), [startGeneration]);
+
   return renderGenerating();
-};
+});
