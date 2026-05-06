@@ -983,8 +983,8 @@ export const inspirationBackgroundApi = {
     narrative_perspective: string;
     outline_mode: string;
   }) => {
-    const response = await axios.post('/api/inspiration/background', data);
-    return response.data;
+    const response = await api.post('/inspiration/background', data);
+    return response;
   },
 };
 

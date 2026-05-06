@@ -565,6 +565,7 @@ const Inspiration: React.FC = () => {
         setCurrentStep('generating');
         return;
       } else if (option === '🔄 后台创建') {
+        setMessages(prev => [...prev, { type: 'user', content: '后台创建' }]);
         // 调用后台创建 API
         try {
           const data = wizardData as WizardData;
@@ -572,13 +573,13 @@ const Inspiration: React.FC = () => {
             title: data.title,
             description: data.description,
             theme: data.theme,
-            genre: data.genre,
+            genre: Array.isArray(data.genre) ? data.genre.join(',') : data.genre,
             narrative_perspective: data.narrative_perspective,
             outline_mode: data.outline_mode,
           });
           message.success('已在后台开始生成，请稍后查看');
-          window.location.href = 'http://localhost:8888';
-        } catch {
+          window.location.href = window.location.origin;
+        } catch (error: unknown) {
           message.error('创建失败，请重试');
         }
         return;

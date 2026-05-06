@@ -508,7 +508,7 @@ class InspirationBackgroundRequest(BaseModel):
     title: str
     description: str
     theme: str
-    genre: str
+    genre: str  # 前端发送的是genre标签字符串或数组
     narrative_perspective: str
     outline_mode: str = "one-to-one"
 

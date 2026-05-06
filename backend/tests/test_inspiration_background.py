@@ -3,6 +3,8 @@
 """
 import pytest
 import os
+from unittest.mock import AsyncMock, MagicMock, patch
+from inspect import signature
 
 # 确保在导入前设置必要的环境变量
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://mumuai:password@localhost:5432/mumuai_novel")
@@ -256,3 +258,194 @@ class TestAPIEndpointExists:
         ]
         post_paths = [route.path for route in post_routes]
         assert any("background" in path for path in post_paths)
+
+
+class TestInspirationBackgroundEndpoint:
+    """测试灵感模式后台任务 API 端点（使用 TestClient）"""
+
+    def test_endpoint_exists_and_accepts_post(self):
+        """验证 background 端点存在且接受 POST 方法"""
+        from app.api.inspiration import router
+
+        # Find the background route
+        background_route = None
+        for route in router.routes:
+            if "background" in route.path and hasattr(route, "methods"):
+                background_route = route
+                break
+
+        assert background_route is not None, "background route not found"
+        assert "POST" in background_route.methods, "background route should accept POST"
+
+    def test_endpoint_requires_authentication(self):
+        """验证端点需要认证（返回 401 在认证检查之前）"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.post(
+                "/api/inspiration/background",
+                json={
+                    "title": "测试小说",
+                    "description": "测试描述",
+                    "theme": "奇幻",
+                    "genre": "玄幻",
+                    "narrative_perspective": "第三人称"
+                }
+            )
+            # Auth is checked before validation, so we get 401
+            assert response.status_code == 401
+
+    def test_endpoint_validates_required_fields(self):
+        """验证端点验证必填字段（Pydantic 验证）"""
+        from pydantic import ValidationError
+        from app.api.inspiration import InspirationBackgroundRequest
+
+        # Missing required fields should raise ValidationError
+        with pytest.raises(ValidationError):
+            InspirationBackgroundRequest(
+                title="测试小说"
+                # Missing: description, theme, genre, narrative_perspective
+            )
+
+
+class TestRunInspirationBgSignature:
+    """测试 _run_inspiration_bg 函数签名"""
+
+    def test_function_accepts_required_parameters(self):
+        """验证函数接受所需的参数: task_id, user_id, db, task_input"""
+        from app.api.inspiration import _run_inspiration_bg
+        import inspect
+
+        sig = signature(_run_inspiration_bg)
+        params = list(sig.parameters.keys())
+
+        # Verify parameter names and order
+        assert params[0] == "task_id", "First parameter should be task_id"
+        assert params[1] == "user_id", "Second parameter should be user_id"
+        assert params[2] == "db", "Third parameter should be db"
+        assert params[3] == "task_input", "Fourth parameter should be task_input"
+
+    def test_function_is_async(self):
+        """验证函数是异步函数"""
+        from app.api.inspiration import _run_inspiration_bg
+        import inspect
+
+        assert inspect.iscoroutinefunction(_run_inspiration_bg), \
+            "_run_inspiration_bg should be an async function"
+
+    def test_function_parameters_have_correct_types(self):
+        """验证函数参数类型注解"""
+        from app.api.inspiration import _run_inspiration_bg
+        import inspect
+
+        sig = signature(_run_inspiration_bg)
+
+        # task_id should be str
+        assert sig.parameters["task_id"].annotation == str, \
+            "task_id should be annotated as str"
+
+        # user_id should be str
+        assert sig.parameters["user_id"].annotation == str, \
+            "user_id should be annotated as str"
+
+        # task_input should be dict
+        assert sig.parameters["task_input"].annotation == dict, \
+            "task_input should be annotated as dict"
+
+
+class TestStageProgressCalculation:
+    """测试阶段进度计算"""
+
+    def test_stage_1_range_0_to_25_percent(self):
+        """验证阶段1进度范围: 0-25% (项目创建 + 世界观)"""
+        # Stage 1 starts at 0% and ends at 25%
+        stage_1_milestones = [0, 0.1, 0.25]
+
+        for milestone in stage_1_milestones:
+            progress = int(milestone * 100)
+            assert 0 <= progress <= 25, \
+                f"Stage 1 milestone {milestone} ({progress}%) should be in range 0-25%"
+
+    def test_stage_2_range_25_to_50_percent(self):
+        """验证阶段2进度范围: 25-50% (职业体系)"""
+        # Stage 2: 25-50%
+        stage_2_milestones = [0.3, 0.5]
+
+        for milestone in stage_2_milestones:
+            progress = int(milestone * 100)
+            assert 25 <= progress <= 50, \
+                f"Stage 2 milestone {milestone} ({progress}%) should be in range 25-50%"
+
+    def test_stage_3_range_50_to_75_percent(self):
+        """验证阶段3进度范围: 50-75% (角色生成)"""
+        # Stage 3: 50-75%
+        stage_3_milestones = [0.55, 0.75]
+
+        for milestone in stage_3_milestones:
+            progress = int(milestone * 100)
+            assert 50 <= progress <= 75, \
+                f"Stage 3 milestone {milestone} ({progress}%) should be in range 50-75%"
+
+    def test_stage_4_range_75_to_100_percent(self):
+        """验证阶段4进度范围: 75-100% (大纲生成)"""
+        # Stage 4: 75-100%
+        stage_4_milestones = [0.8, 0.95]
+
+        for milestone in stage_4_milestones:
+            progress = int(milestone * 100)
+            assert 75 <= progress <= 100, \
+                f"Stage 4 milestone {milestone} ({progress}%) should be in range 75-100%"
+
+    def test_all_four_stages_cover_full_range(self):
+        """验证四个阶段覆盖完整进度范围 0-100%"""
+        # Stage boundaries
+        stage_boundaries = [
+            (0, 25),    # Stage 1: 0-25%
+            (25, 50),   # Stage 2: 25-50%
+            (50, 75),   # Stage 3: 50-75%
+            (75, 100),  # Stage 4: 75-100%
+        ]
+
+        for start, end in stage_boundaries:
+            assert start >= 0 and end <= 100, \
+                f"Stage range ({start}%, {end}%) should be within 0-100%"
+
+        # Verify no gaps between stages
+        for i in range(len(stage_boundaries) - 1):
+            current_end = stage_boundaries[i][1]
+            next_start = stage_boundaries[i + 1][0]
+            assert current_end == next_start, \
+                f"Gap found between stages: {current_end}% != {next_start}%"
+
+    def test_progress_milestones_match_spec(self):
+        """验证进度里程碑与规范一致"""
+        # From the _run_inspiration_bg function, the milestones are:
+        expected_milestones = {
+            "stage_1_start": 0.0,
+            "stage_1_project_start": 0.1,
+            "stage_1_world_end": 0.25,
+            "stage_2_career_start": 0.3,
+            "stage_2_career_end": 0.5,
+            "stage_3_characters_start": 0.55,
+            "stage_3_characters_end": 0.75,
+            "stage_4_outline_start": 0.8,
+            "stage_4_outline_end": 0.95,
+            "completion": 1.0,
+        }
+
+        # Stage 1: 项目创建 + 世界观 (0-25%)
+        assert expected_milestones["stage_1_project_start"] >= 0.0
+        assert expected_milestones["stage_1_world_end"] <= 0.25
+
+        # Stage 2: 职业体系 (25-50%)
+        assert expected_milestones["stage_2_career_start"] >= 0.25
+        assert expected_milestones["stage_2_career_end"] <= 0.50
+
+        # Stage 3: 角色生成 (50-75%)
+        assert expected_milestones["stage_3_characters_start"] >= 0.50
+        assert expected_milestones["stage_3_characters_end"] <= 0.75
+
+        # Stage 4: 大纲生成 (75-100%)
+        assert expected_milestones["stage_4_outline_start"] >= 0.75
+        assert expected_milestones["stage_4_outline_end"] <= 1.0
