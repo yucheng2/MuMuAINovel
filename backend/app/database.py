@@ -173,7 +173,14 @@ async def get_db(request: Request):
     try:
         yield session
         if session.in_transaction():
-            await session.rollback()
+            try:
+                await session.rollback()
+            except Exception as rollback_error:
+                error_str = str(rollback_error).lower()
+                if "connection" in error_str and ("does not exist" in error_str or "closed" in error_str or "timeout" in error_str):
+                    logger.warning(f"⚠️ 连接已失效，跳过正常回滚 [User:{user_id}][ID:{session_id}]")
+                else:
+                    raise
     except GeneratorExit:
         _session_stats["generator_exits"] += 1
         logger.warning(f"⚠️ GeneratorExit [User:{user_id}][ID:{session_id}] - SSE连接断开（总计:{_session_stats['generator_exits']}次）")
@@ -183,7 +190,12 @@ async def get_db(request: Request):
                 logger.info(f"✅ 事务已回滚 [User:{user_id}][ID:{session_id}]（GeneratorExit）")
         except Exception as rollback_error:
             _session_stats["errors"] += 1
-            logger.error(f"❌ GeneratorExit回滚失败 [User:{user_id}][ID:{session_id}]: {str(rollback_error)}")
+            # 忽略连接已关闭的错误
+            error_str = str(rollback_error).lower()
+            if "connection" in error_str and ("does not exist" in error_str or "closed" in error_str or "timeout" in error_str):
+                logger.warning(f"⚠️ 连接已失效，跳过回滚 [User:{user_id}][ID:{session_id}]（GeneratorExit）")
+            else:
+                logger.error(f"❌ GeneratorExit回滚失败 [User:{user_id}][ID:{session_id}]: {str(rollback_error)}")
     except Exception as e:
         _session_stats["errors"] += 1
         logger.error(f"❌ 会话异常 [User:{user_id}][ID:{session_id}]: {str(e)}")
@@ -192,14 +204,26 @@ async def get_db(request: Request):
                 await session.rollback()
                 logger.info(f"✅ 事务已回滚 [User:{user_id}][ID:{session_id}]（异常）")
         except Exception as rollback_error:
-            logger.error(f"❌ 异常回滚失败 [User:{user_id}][ID:{session_id}]: {str(rollback_error)}")
+            # 忽略连接已关闭的错误，避免嵌套异常
+            error_str = str(rollback_error).lower()
+            if "connection" in error_str and ("does not exist" in error_str or "closed" in error_str or "timeout" in error_str):
+                logger.warning(f"⚠️ 连接已失效，跳过回滚 [User:{user_id}][ID:{session_id}]")
+            else:
+                logger.error(f"❌ 异常回滚失败 [User:{user_id}][ID:{session_id}]: {str(rollback_error)}")
         raise
     finally:
         try:
             if session.in_transaction():
-                await session.rollback()
-                logger.warning(f"⚠️ finally中发现未提交事务 [User:{user_id}][ID:{session_id}]，已回滚")
-            
+                try:
+                    await session.rollback()
+                    logger.warning(f"⚠️ finally中发现未提交事务 [User:{user_id}][ID:{session_id}]，已回滚")
+                except Exception as rollback_error:
+                    error_str = str(rollback_error).lower()
+                    if "connection" in error_str and ("does not exist" in error_str or "closed" in error_str or "timeout" in error_str):
+                        logger.warning(f"⚠️ finally中连接已失效，跳过回滚 [User:{user_id}][ID:{session_id}]")
+                    else:
+                        raise
+
             await session.close()
             
             _session_stats["closed"] += 1
@@ -218,7 +242,12 @@ async def get_db(request: Request):
                 
         except Exception as e:
             _session_stats["errors"] += 1
-            logger.error(f"❌ 关闭会话时出错 [User:{user_id}][ID:{session_id}]: {str(e)}", exc_info=True)
+            error_str = str(e).lower()
+            # 忽略连接已关闭的错误
+            if "connection" in error_str and ("does not exist" in error_str or "closed" in error_str or "timeout" in error_str):
+                logger.warning(f"⚠️ 关闭会话时连接已失效 [User:{user_id}][ID:{session_id}]，忽略错误")
+            else:
+                logger.error(f"❌ 关闭会话时出错 [User:{user_id}][ID:{session_id}]: {str(e)}", exc_info=True)
             try:
                 await session.close()
             except Exception:

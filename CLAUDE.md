@@ -19,8 +19,15 @@ pnpm lint             # 代码检查
 pnpm preview          # 预览构建结果
 ```
 
-### 后端
+### 后端（使用 uv 管理 Python 版本）
 
+```bash
+cd backend
+uv pip install --system -r requirements.txt   # 安装依赖（使用 uv 管理 Python 版本）
+uv run python -m uvicorn app.main:app --host localhost --port 8000 --reload   # 开发模式
+```
+
+或者直接使用系统 Python 安装依赖后运行：
 ```bash
 cd backend
 pip install -r requirements.txt   # 安装依赖

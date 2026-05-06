@@ -445,6 +445,7 @@ class AIService:
             prompt=prompt,
             auto_mcp=auto_mcp,
             tools_count=len(tools) if tools else 0,
+            stream=False,
         )
 
         try:
@@ -643,7 +644,11 @@ class AIService:
                     return result
                 return result
             except Exception as e:
-                logger.warning(f"⚠️ LangChain structured output 失败，回退到传统方法: {e}")
+                # 对于思考块导致的解析错误，使用 DEBUG 级别（因为 fallback 会处理成功）
+                if "json_invalid" in str(e) or "Invalid JSON" in str(e) or "thinking" in str(e).lower():
+                    logger.debug(f"⚠️ LangChain structured output 失败，回退到传统方法: {e}")
+                else:
+                    logger.warning(f"⚠️ LangChain structured output 失败，回退到传统方法: {e}")
                 # 继续使用传统方法
 
         last_response = ""
@@ -655,6 +660,7 @@ class AIService:
             prompt=prompt,
             auto_mcp=auto_mcp,
             tools_count=0,
+            stream=False,
         )
 
         try:
@@ -837,7 +843,11 @@ class AIService:
                 return result
             except Exception as e:
                 last_error = e
-                logger.warning(f"⚠️ LangChain structured output 失败 (尝试 {attempt}/{max_retries}): {e}")
+                # 对于思考块导致的解析错误，使用 DEBUG 级别（因为 fallback 会处理成功）
+                if "json_invalid" in str(e) or "Invalid JSON" in str(e) or "thinking" in str(e).lower():
+                    logger.debug(f"⚠️ LangChain structured output 失败 (尝试 {attempt}/{max_retries}): {e}")
+                else:
+                    logger.warning(f"⚠️ LangChain structured output 失败 (尝试 {attempt}/{max_retries}): {e}")
 
                 # 如果 with_structured_output 失败，尝试直接调用并手动解析
                 # 这对于 MiniMax 等返回思考块的模型特别必要
