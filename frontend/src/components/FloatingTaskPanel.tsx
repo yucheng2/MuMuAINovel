@@ -10,6 +10,7 @@ import {
   UpOutlined,
   DownOutlined,
   ClearOutlined,
+  BulbOutlined,
 } from '@ant-design/icons';
 import { getProjectTasks, cancelTask, cancelBatchTask, deleteTask, clearProjectTasks, type TaskStatus } from '../services/backgroundTaskService';
 import { eventBus } from '../store/eventBus';
@@ -159,6 +160,8 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
         return '批量章节生成';
       case 'wizard':
         return '向导创建';
+      case 'inspiration':
+        return '灵感创建';
       default:
         return taskType;
     }
