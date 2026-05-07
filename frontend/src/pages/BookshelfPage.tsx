@@ -445,9 +445,10 @@ export default function BookshelfPage({
                       height: isMobile ? 42 : 52,
                       fontSize: isMobile ? '14px' : '16px',
                       borderRadius: 10,
-                      borderColor: alphaColor(token.colorWarning, isDark ? 0.34 : 0.5),
-                      color: `color-mix(in srgb, ${token.colorWarning} ${isDark ? 78 : 72}%, ${token.colorText} ${isDark ? 22 : 28}%)`,
-                      background: `linear-gradient(180deg, ${alphaColor(token.colorWarning, isDark ? 0.12 : 0.12)} 0%, ${alphaColor(token.colorWarning, isDark ? 0.2 : 0.2)} 100%)`,
+                      borderColor: alphaColor('#8b5cf6', isDark ? 0.5 : 0.5),
+                      color: '#fff',
+                      background: `linear-gradient(135deg, ${alphaColor('#8b5cf6', isDark ? 0.7 : 0.85)} 0%, ${alphaColor('#06b6d4', isDark ? 0.6 : 0.75)} 100%)`,
+                      boxShadow: `0 4px 12px ${alphaColor('#8b5cf6', isDark ? 0.3 : 0.4)}`,
                     }}
                     block
                   >
