@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useMemo } from 'react';
 import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination, theme } from 'antd';
-import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined, RocketOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
 import { getProjectTasks, type TaskStatus } from '../services/backgroundTaskService';
@@ -108,6 +108,7 @@ const { TextArea } = Input;
 export default function Outline() {
   const { currentProject, outlines, setCurrentProject } = useStore();
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isAutoWriting, setIsAutoWriting] = useState(false);
   const [editForm] = Form.useForm();
   const [generateForm] = Form.useForm();
   const [expansionForm] = Form.useForm();
@@ -584,6 +585,15 @@ export default function Outline() {
       message.error('AI生成失败');
       setIsGenerating(false);
     }
+  };
+
+  // AI自动写作功能
+  const handleAutoWrite = async () => {
+    if (!currentProject?.id) {
+      message.warning('请先选择一个项目');
+      return;
+    }
+    message.info('自动写作功能开发中...');
   };
 
   const showGenerateModal = async () => {
@@ -1500,6 +1510,14 @@ export default function Outline() {
               block={isMobile}
             >
               {isMobile ? 'AI生成/续写' : 'AI生成/续写大纲'}
+            </Button>
+            <Button
+              icon={<RocketOutlined />}
+              onClick={handleAutoWrite}
+              loading={isAutoWriting}
+              block={isMobile}
+            >
+              {isMobile ? 'AI自动写作' : 'AI自动写作'}
             </Button>
             {outlines.length > 0 && currentProject?.outline_mode === 'one-to-many' && (
               <Button
