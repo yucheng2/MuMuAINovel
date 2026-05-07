@@ -13,10 +13,11 @@ import {
   BulbOutlined,
 } from '@ant-design/icons';
 import { getProjectTasks, cancelTask, cancelBatchTask, deleteTask, clearProjectTasks, type TaskStatus } from '../services/backgroundTaskService';
+import { inspirationBackgroundApi } from '../services/api';
 import { eventBus } from '../store/eventBus';
 
 interface FloatingTaskPanelProps {
-  projectId: string;
+  projectId?: string;  // 可选，不提供时显示所有用户任务（包括无项目的灵感任务）
   autoRefreshInterval?: number; // 自动刷新间隔（毫秒），默认3000
 }
 
@@ -36,7 +37,6 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
 
   // 加载任务列表
   const loadTasks = useCallback(async () => {
-    if (!projectId) return;
     setLoading(true);
     try {
       const result = await getProjectTasks(projectId);
@@ -122,6 +122,22 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
     } catch (error) {
       console.error('清理任务记录失败:', error);
       message.error('清理任务记录失败');
+    }
+  };
+
+  // 重试灵感创建任务
+  const handleRetryTask = async (task: TaskStatus) => {
+    if (task.task_type !== 'inspiration') {
+      message.error('仅支持重试灵感创建任务');
+      return;
+    }
+    try {
+      await inspirationBackgroundApi.retryTask(task.id);
+      message.success('任务已重新创建');
+      loadTasks();
+    } catch (error) {
+      console.error('重试任务失败:', error);
+      message.error('重试失败，请重试');
     }
   };
 
@@ -318,6 +334,16 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
                           {(task.status === 'completed' ||
                             task.status === 'failed' ||
                             task.status === 'cancelled') && (
+                            <>
+                              {task.task_type === 'inspiration' && (task.status === 'failed' || task.status === 'cancelled') && (
+                                <Button
+                                  size="small"
+                                  icon={<ReloadOutlined />}
+                                  onClick={() => handleRetryTask(task)}
+                                >
+                                  重试
+                                </Button>
+                              )}
                               <Popconfirm
                                 title="确认删除任务记录？"
                                 onConfirm={() => handleDeleteTask(task.id)}
@@ -328,7 +354,8 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
                                   删除
                                 </Button>
                               </Popconfirm>
-                            )}
+                            </>
+                          )}
                         </Space>
                       </div>
                     </div>

@@ -11,7 +11,7 @@ class BackgroundTask(Base):
     
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String(100), nullable=False, index=True, comment="用户ID")
-    project_id = Column(String(36), nullable=False, index=True, comment="项目ID")
+    project_id = Column(String(36), nullable=True, index=True, comment="项目ID(灵感任务创建前为空)")
     
     # 任务类型
     task_type = Column(String(50), nullable=False, comment="任务类型: outline_new/outline_continue/outline_expand/chapter_generate/chapter_batch/wizard")

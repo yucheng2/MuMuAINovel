@@ -191,12 +191,13 @@ const Inspiration: React.FC = () => {
 
   // ==================== 组件挂载时恢复缓存 ====================
 
-  useEffect(() => {
-    if (!cacheLoaded) {
-      restoreFromCache();
-      setCacheLoaded(true);
-    }
-  }, [cacheLoaded, restoreFromCache]);
+  // TODO: 暂时禁用恢复功能
+  // useEffect(() => {
+  //   if (!cacheLoaded) {
+  //     restoreFromCache();
+  //     setCacheLoaded(true);
+  //   }
+  // }, [cacheLoaded, restoreFromCache]);
 
   // ==================== 自动保存：状态变化时保存 ====================
 
@@ -578,7 +579,7 @@ const Inspiration: React.FC = () => {
             outline_mode: data.outline_mode,
           });
           message.success('已在后台开始生成，请稍后查看');
-          window.location.href = window.location.origin;
+          window.location.href = `${window.location.origin}/projects`;
         } catch (error: unknown) {
           message.error('创建失败，请重试');
         }
@@ -1158,7 +1159,7 @@ const Inspiration: React.FC = () => {
             {isMobile ? '返回' : '返回首页'}
           </Button>
 
-          <div style={{ textAlign: 'center' }}>
+          <div style={{ textAlign: 'center', flex: 1 }}>
             <Title
               level={isMobile ? 4 : 2}
               style={{
@@ -1172,8 +1173,8 @@ const Inspiration: React.FC = () => {
             </Title>
           </div>
 
-          {/* 重新开始按钮 - 只在对话进行中显示 */}
-          {currentStep !== 'idea' && currentStep !== 'generating' && currentStep !== 'complete' ? (
+          {/* 重新开始按钮 - 已禁用，刷新页面即可重新开始 */}
+          {/* {currentStep !== 'idea' && currentStep !== 'generating' && currentStep !== 'complete' ? (
             <Button
               icon={<ReloadOutlined />}
               onClick={() => {
@@ -1200,7 +1201,7 @@ const Inspiration: React.FC = () => {
             </Button>
           ) : (
             <div style={{ width: isMobile ? 60 : 120 }}></div>
-          )}
+          )} */}
         </div>
       </div>
 

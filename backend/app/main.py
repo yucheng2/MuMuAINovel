@@ -44,6 +44,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"后台任务表检查失败（不影响启动）: {e}")
 
+    # 恢复超时任务 - 将后端重启前运行中的任务标记为失败
+    try:
+        from app.services.background_task_service import background_task_service
+        await background_task_service.recover_stale_tasks(stale_minutes=5)
+        logger.info("超时任务恢复检查完成")
+    except Exception as e:
+        logger.warning(f"超时任务恢复失败（不影响启动）: {e}")
+
     logger.info("应用启动完成")
     
     yield

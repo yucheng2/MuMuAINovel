@@ -61,13 +61,15 @@ export async function getTaskStatus(taskId: string): Promise<TaskStatus> {
 
 /**
  * 获取项目的任务列表
+ * 如果不提供 projectId，则返回该用户所有任务（包括无项目的灵感任务）
  */
 export async function getProjectTasks(
-  projectId: string,
+  projectId?: string,
   taskType?: string,
   limit: number = 20
 ): Promise<TaskListResponse> {
-  const params = new URLSearchParams({ project_id: projectId, limit: String(limit) });
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (projectId) params.set('project_id', projectId);
   if (taskType) params.set('task_type', taskType);
   const response = await fetch(`${API_BASE}?${params}`);
   if (!response.ok) {
@@ -111,9 +113,11 @@ export async function cancelTask(taskId: string): Promise<void> {
 
 /**
  * 清理项目已结束的任务记录
+ * 如果不提供 projectId，则清理该用户所有已结束的任务（包括无项目的灵感任务）
  */
-export async function clearProjectTasks(projectId: string): Promise<{ deleted_count: number }> {
-  const response = await fetch(`${API_BASE}/project/${projectId}/clear`, { method: 'DELETE' });
+export async function clearProjectTasks(projectId?: string): Promise<{ deleted_count: number }> {
+  const url = projectId ? `${API_BASE}/project/${projectId}/clear` : `${API_BASE}/clear`;
+  const response = await fetch(url, { method: 'DELETE' });
   if (!response.ok) {
     throw new Error(`清理任务记录失败: ${response.statusText}`);
   }

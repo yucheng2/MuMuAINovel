@@ -70,6 +70,7 @@ export default function ProjectList() {
   const [validating, setValidating] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
+  const [selectionMode, setSelectionMode] = useState(false);
   const [exportOptions, setExportOptions] = useState({
     includeWritingStyles: true,
     includeGenerationHistory: false,
@@ -195,6 +196,89 @@ export default function ProjectList() {
     } catch (error) {
       console.error('下载封面失败:', error);
       message.error('下载封面失败');
+    }
+  };
+
+  // 批量选择操作
+  const handleToggleProjectSelection = (projectId: string) => {
+    setSelectedProjectIds(prev =>
+      prev.includes(projectId)
+        ? prev.filter(id => id !== projectId)
+        : [...prev, projectId]
+    );
+  };
+
+  const handleToggleAllSelection = () => {
+    if (selectedProjectIds.length === projects.length) {
+      setSelectedProjectIds([]);
+    } else {
+      setSelectedProjectIds(projects.map(p => p.id));
+    }
+  };
+
+  const handleSetSelectionMode = (mode: boolean) => {
+    setSelectionMode(mode);
+    if (!mode) {
+      setSelectedProjectIds([]);
+    }
+  };
+
+  const handleBatchDelete = async (projectIds: string[]) => {
+    try {
+      let successCount = 0;
+      let failCount = 0;
+      for (const id of projectIds) {
+        try {
+          await deleteProject(id);
+          successCount++;
+        } catch (error) {
+          console.error(`删除项目 ${id} 失败:`, error);
+          failCount++;
+        }
+      }
+      if (failCount === 0) {
+        message.success(`成功删除 ${successCount} 个项目`);
+      } else {
+        message.warning(`删除完成：成功 ${successCount} 个，失败 ${failCount} 个`);
+      }
+      setSelectedProjectIds([]);
+      setSelectionMode(false);
+    } catch (error) {
+      console.error('批量删除失败:', error);
+      message.error('批量删除失败');
+    }
+  };
+
+  const handleBatchGenerateCover = async (projectIds: string[]) => {
+    try {
+      let successCount = 0;
+      let failCount = 0;
+      for (const id of projectIds) {
+        const project = projects.find(p => p.id === id);
+        if (!project) continue;
+        try {
+          message.loading({ content: `正在为《${project.title}》生成封面...`, key: `cover-batch-${id}` });
+          await projectApi.generateCover(id, true);
+          message.success({ content: `《${project.title}》封面生成成功`, key: `cover-batch-${id}` });
+          successCount++;
+        } catch (error) {
+          console.error(`生成封面 ${id} 失败:`, error);
+          message.error({ content: `《${project.title}》封面生成失败`, key: `cover-batch-${id}` });
+          failCount++;
+        }
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      if (failCount === 0) {
+        message.success(`成功为 ${successCount} 个项目生成封面`);
+      } else {
+        message.warning(`封面生成完成：成功 ${successCount} 个，失败 ${failCount} 个`);
+      }
+      setSelectedProjectIds([]);
+      setSelectionMode(false);
+      await refreshProjects();
+    } catch (error) {
+      console.error('批量生成封面失败:', error);
+      message.error('批量生成封面失败');
     }
   };
 
@@ -886,6 +970,14 @@ export default function ProjectList() {
               getDisplayStatus={getDisplayStatus}
               getStatusTag={getStatusTag}
               formatDate={formatDate}
+              selectedProjectIds={selectedProjectIds}
+              onToggleProjectSelection={handleToggleProjectSelection}
+              onToggleAllSelection={handleToggleAllSelection}
+              onBatchDelete={handleBatchDelete}
+              onBatchGenerateCover={handleBatchGenerateCover}
+              selectionMode={selectionMode}
+              setSelectionMode={handleSetSelectionMode}
+              setSelectedProjectIds={setSelectedProjectIds}
             />
           )}
         
