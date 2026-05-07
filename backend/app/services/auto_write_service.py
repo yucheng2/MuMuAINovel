@@ -31,8 +31,71 @@ async def get_project_word_count(project_id: str, db: AsyncSession) -> int:
 
 async def generate_one_outline(project_id: str, user_id: str, db: AsyncSession):
     """生成1个大纲"""
-    # TODO: 调用现有的 continue_outline_generator，传入 chapter_count=1
-    pass
+    from app.api.outlines import continue_outline_generator
+    from app.models.outline import Outline as OutlineModel
+
+    # 获取项目信息
+    project = await get_project(project_id, db)
+    if not project:
+        return None
+
+    # 计算当前已有大纲数量
+    outlines_result = await db.execute(
+        select(OutlineModel).where(OutlineModel.project_id == project_id)
+    )
+    existing_outlines = list(outlines_result.scalars().all())
+    current_count = len(existing_outlines)
+
+    # 自动判断情节阶段
+    if project.chapter_count and project.chapter_count > 0:
+        progress = current_count / project.chapter_count
+        if progress < 0.5:
+            plot_stage = "development"
+        elif progress < 0.8:
+            plot_stage = "climax"
+        else:
+            plot_stage = "ending"
+    else:
+        plot_stage = "development"
+
+    # 构建请求
+    request_data = {
+        "project_id": project_id,
+        "chapter_count": 1,  # 每次只生成1个大纲
+        "mode": "continue",
+        "plot_stage": plot_stage,
+        "story_direction": "自然延续故事发展",
+        "requirements": ""
+    }
+
+    # 调用现有的 continue_outline_generator
+    user_ai_service = await AIService.create(user_id, db)
+
+    # consume the generator to trigger actual generation
+    async for _ in continue_outline_generator(
+        request_data, db, user_ai_service, user_id
+    ):
+        pass  # SSE events are already handled inside the generator (commits/db operations)
+
+    # 返回生成的大纲
+    new_outlines_result = await db.execute(
+        select(OutlineModel).where(OutlineModel.project_id == project_id)
+    )
+    new_outlines = list(new_outlines_result.scalars().all())
+    if len(new_outlines) > current_count:
+        return new_outlines[-1]  # 返回最新的大纲
+    return None
+
+
+async def get_outlines(project_id: str, db: AsyncSession):
+    """获取项目所有大纲"""
+    from app.models.outline import Outline as OutlineModel
+    result = await db.execute(
+        select(OutlineModel)
+        .where(OutlineModel.project_id == project_id)
+        .order_by(OutlineModel.order_index)
+    )
+    return list(result.scalars().all())
 
 
 async def expand_outline_to_chapters(outline_id: str, user_id: str, db: AsyncSession, count: int = 3):
