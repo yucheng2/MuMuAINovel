@@ -27,6 +27,10 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    # 确保所有模型已注册到 Base.metadata
+    from app.database import _ensure_models_registered
+    _ensure_models_registered()
+
     # 注册MCP状态同步服务
     register_status_sync()
 

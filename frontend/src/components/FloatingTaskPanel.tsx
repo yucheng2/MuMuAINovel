@@ -193,7 +193,7 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
     <div
       style={{
         position: 'fixed',
-        bottom: 10,
+        bottom: 60,
         right: 23,
         width: collapsed ? 260 : 400,
         maxHeight: collapsed ? 60 : 500,

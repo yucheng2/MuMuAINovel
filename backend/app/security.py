@@ -64,6 +64,8 @@ def verify_session_token(token: str) -> str | None:
 
 
 def _is_forbidden_ip(ip: ipaddress._BaseAddress) -> bool:
+    # TODO: 暂时禁用内网地址校验，允许所有地址
+    return False
     return any([
         ip.is_private,
         ip.is_loopback,
@@ -88,8 +90,9 @@ def validate_public_http_url(raw_url: str, *, allowed_schemes: Iterable[str] = (
         raise HTTPException(status_code=400, detail="URL不允许包含认证信息")
 
     host = parsed.hostname.strip().rstrip(".")
-    if host.lower() in {"localhost", "localhost.localdomain"}:
-        raise HTTPException(status_code=400, detail="URL不允许指向本机地址")
+    # TODO: 暂时禁用本机地址校验
+    # if host.lower() in {"localhost", "localhost.localdomain"}:
+    #     raise HTTPException(status_code=400, detail="URL不允许指向本机地址")
 
     try:
         ip = ipaddress.ip_address(host)

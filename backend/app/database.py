@@ -14,16 +14,41 @@ logger = get_logger(__name__)
 # 创建基类
 Base = declarative_base()
 
-# 导入所有模型，确保 Base.metadata 能够发现它们
-# 这必须在 Base 创建之后、init_db 之前导入
-from app.models import (
-    Project, Outline, Character, Chapter, GenerationHistory,
-    Settings, WritingStyle, ProjectDefaultStyle,
-    RelationshipType, CharacterRelationship, Organization, OrganizationMember,
-    StoryMemory, PlotAnalysis, AnalysisTask, BatchGenerationTask,
-    RegenerationTask, Career, CharacterCareer, User, MCPPlugin, PromptTemplate,
-    BackgroundTask
-)
+# 模型注册表 - 用于延迟导入模型以避免循环依赖
+_model_registry_done = False
+
+
+def _ensure_models_registered():
+    """确保所有模型已被导入并注册到 Base.metadata"""
+    global _model_registry_done
+    if _model_registry_done:
+        return
+
+    # 延迟导入所有模型，确保 Base 已创建
+    # 这些导入必须在所有模型定义之后、首次使用数据库之前完成
+    from app.models.project import Project
+    from app.models.outline import Outline
+    from app.models.character import Character
+    from app.models.chapter import Chapter
+    from app.models.generation_history import GenerationHistory
+    from app.models.settings import Settings
+    from app.models.writing_style import WritingStyle
+    from app.models.project_default_style import ProjectDefaultStyle
+    from app.models.relationship import RelationshipType, CharacterRelationship, Organization, OrganizationMember
+    from app.models.memory import StoryMemory, PlotAnalysis
+    from app.models.analysis_task import AnalysisTask
+    from app.models.batch_generation_task import BatchGenerationTask
+    from app.models.regeneration_task import RegenerationTask
+    from app.models.career import Career, CharacterCareer
+    from app.models.user import User, UserPassword
+    from app.models.mcp_plugin import MCPPlugin
+    from app.models.prompt_template import PromptTemplate
+    from app.models.foreshadow import Foreshadow
+    from app.models.prompt_workshop import PromptWorkshopItem, PromptSubmission, PromptWorkshopLike
+    from app.models.background_task import BackgroundTask
+
+    _model_registry_done = True
+    logger.debug("所有模型已注册到 Base.metadata")
 
 # 引擎缓存：每个用户一个引擎
 _engine_cache: Dict[str, Any] = {}

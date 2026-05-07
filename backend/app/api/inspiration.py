@@ -828,7 +828,9 @@ async def _generate_single_option(
     async for chunk in ai_service.generate_text_stream(
         prompt=user_prompt,
         system_prompt=system_prompt,
-        temperature=temperature
+        temperature=temperature,
+        auto_mcp=False,  # 禁用MCP，避免工具干扰简单选项生成
+        max_tokens=4000,  # 确保有足够空间生成完整JSON
     ):
         accumulated_text += chunk
 
@@ -872,7 +874,9 @@ async def _generate_genre_options(
     async for chunk in ai_service.generate_text_stream(
         prompt=user_prompt,
         system_prompt=system_prompt,
-        temperature=temperature
+        temperature=temperature,
+        auto_mcp=False,  # 禁用MCP，避免工具干扰简单选项生成
+        max_tokens=4000,  # 确保有足够空间生成完整JSON
     ):
         accumulated_text += chunk
 

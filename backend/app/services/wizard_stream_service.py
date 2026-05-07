@@ -99,6 +99,8 @@ class WizardStreamService:
                     provider=provider,
                     model=model,
                     tool_choice="required",
+                    auto_mcp=False,  # 禁用MCP，避免工具干扰简单生成
+                    max_tokens=4000,  # 确保有足够空间生成完整JSON
                 ):
                     accumulated_text += chunk
 
@@ -278,6 +280,8 @@ class WizardStreamService:
                         prompt=career_prompt,
                         provider=provider,
                         model=model,
+                        auto_mcp=False,  # 禁用MCP，避免工具干扰简单生成
+                        max_tokens=4000,  # 确保有足够空间生成完整JSON
                     ):
                         career_response += chunk
 
@@ -516,6 +520,8 @@ class WizardStreamService:
                         provider=provider,
                         model=model,
                         tool_choice="required",
+                        auto_mcp=False,  # 禁用MCP，避免工具干扰简单生成
+                        max_tokens=4000,  # 确保有足够空间生成完整JSON
                     ):
                         accumulated_text += chunk
 
@@ -945,6 +951,8 @@ class WizardStreamService:
             prompt=outline_prompt,
             provider=provider,
             model=model,
+            auto_mcp=False,  # 禁用MCP，避免工具干扰简单生成
+            max_tokens=4000,  # 确保有足够空间生成完整JSON
         ):
             accumulated_text += chunk
 

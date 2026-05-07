@@ -980,8 +980,8 @@ export default function ProjectList() {
               setSelectedProjectIds={setSelectedProjectIds}
             />
           )}
-        
-        <ChangelogFloatingButton />
+
+        {/* <ChangelogFloatingButton /> */}
         </div>
       </div>
 

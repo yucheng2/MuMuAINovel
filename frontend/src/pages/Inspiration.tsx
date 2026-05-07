@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Input, Button, Space, Typography, message, Spin, Modal, theme } from 'antd';
-import { SendOutlined, ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons';
+import { SendOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { inspirationApi, inspirationBackgroundApi } from '../services/api';
 import { AIProjectGenerator, type GenerationConfig, type AIProjectGeneratorRef } from '../components/AIProjectGenerator';
 
@@ -86,7 +86,7 @@ const Inspiration: React.FC = () => {
   const [generationConfig, setGenerationConfig] = useState<GenerationConfig | null>(null);
 
   // Modal hook
-  const [modal, contextHolder] = Modal.useModal();
+  const [_modal, contextHolder] = Modal.useModal();
 
   // 滚动容器引用
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -101,7 +101,7 @@ const Inspiration: React.FC = () => {
   } | null>(null);
 
   // 标记是否已经加载缓存
-  const [cacheLoaded, setCacheLoaded] = useState(false);
+  const [cacheLoaded, _setCacheLoaded] = useState(false);
 
   // ==================== 缓存管理函数 ====================
 
@@ -145,7 +145,7 @@ const Inspiration: React.FC = () => {
     }
   }, [currentStep, messages, wizardData, initialIdea, selectedOptions, lastFailedRequest]);
 
-  // 从缓存恢复
+  // 从缓存恢复（暂时禁用）
   const restoreFromCache = useCallback((): boolean => {
     try {
       const cached = localStorage.getItem(CACHE_KEY);
@@ -518,14 +518,12 @@ const Inspiration: React.FC = () => {
 🏷️ 类型：${updatedData.genre.join('、')}
 👁️ 视角：${updatedData.narrative_perspective}
 📋 大纲模式：${modeText}
-
-请选择下一步操作：
       `.trim();
 
       const aiMessage: Message = {
         type: 'ai',
         content: summary,
-        options: ['✅ 确认创建', '🔄 后台创建', '🔄 重新开始']
+        options: ['✅ 确认创建']  // 只有确认创建作为选项，后台创建会在UI上单独显示
       };
       setMessages(prev => [...prev, aiMessage]);
       setCurrentStep('confirm');
@@ -564,28 +562,6 @@ const Inspiration: React.FC = () => {
         };
         setGenerationConfig(config);
         setCurrentStep('generating');
-        return;
-      } else if (option === '🔄 后台创建') {
-        setMessages(prev => [...prev, { type: 'user', content: '后台创建' }]);
-        // 调用后台创建 API
-        try {
-          const data = wizardData as WizardData;
-          await inspirationBackgroundApi.createBackgroundTask({
-            title: data.title,
-            description: data.description,
-            theme: data.theme,
-            genre: Array.isArray(data.genre) ? data.genre.join(',') : data.genre,
-            narrative_perspective: data.narrative_perspective,
-            outline_mode: data.outline_mode,
-          });
-          message.success('已在后台开始生成，请稍后查看');
-          window.location.href = `${window.location.origin}/projects`;
-        } catch (error: unknown) {
-          message.error('创建失败，请重试');
-        }
-        return;
-      } else if (option === '🔄 重新开始') {
-        handleRestart();
         return;
       }
     }
@@ -925,7 +901,54 @@ const Inspiration: React.FC = () => {
                     style={{ width: '100%', marginTop: 12 }}
                     size="small"
                   >
-                    {msg.options.map((option, optIndex) => (
+                    {/* 确认步骤的特殊UI：两个按钮并排 */}
+                    {currentStep === 'confirm' && msg.options.length === 1 && msg.options[0] === '✅ 确认创建' ? (
+                      <Space style={{ width: '100%', justifyContent: 'center' }} size="middle">
+                        <Button
+                          type="primary"
+                          size="large"
+                          onClick={() => handleSelectOption('✅ 确认创建')}
+                          style={{
+                            minWidth: 140,
+                            height: 44,
+                            fontSize: 16,
+                            borderRadius: 22,
+                          }}
+                        >
+                          ✅ 确认创建
+                        </Button>
+                        <Button
+                          size="large"
+                          onClick={async () => {
+                            try {
+                              const data = wizardData as WizardData;
+                              await inspirationBackgroundApi.createBackgroundTask({
+                                title: data.title,
+                                description: data.description,
+                                theme: data.theme,
+                                genre: Array.isArray(data.genre) ? data.genre.join(',') : data.genre,
+                                narrative_perspective: data.narrative_perspective,
+                                outline_mode: data.outline_mode,
+                              });
+                              message.success('已在后台开始生成，请稍后查看');
+                              window.location.href = `${window.location.origin}/projects`;
+                            } catch {
+                              message.error('创建失败，请重试');
+                            }
+                          }}
+                          style={{
+                            minWidth: 140,
+                            height: 44,
+                            fontSize: 16,
+                            borderRadius: 22,
+                          }}
+                        >
+                          🔄 后台创建
+                        </Button>
+                      </Space>
+                    ) : (
+                    /* 默认选项渲染（卡片形式） */
+                    msg.options.map((option, optIndex) => (
                       <Card
                         key={optIndex}
                         hoverable={!msg.optionsDisabled}
@@ -962,7 +985,8 @@ const Inspiration: React.FC = () => {
                       >
                         {option}
                       </Card>
-                    ))}
+                    ))
+                    )}
 
                     {msg.isMultiSelect && (
                       <Button

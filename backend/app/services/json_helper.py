@@ -619,6 +619,76 @@ def loads_json(text: str) -> Any:
                 except Exception:
                     pass
             logger.error(f"❌ json5容错解析也失败: {e5}")
-    
+
+    # 尝试修复不完整的JSON（AI输出被截断的情况）
+    fixed_text = _try_fix_incomplete_json(text)
+    if fixed_text != text:
+        try:
+            result = json.loads(fixed_text)
+            logger.info("✅ 修复不完整JSON后解析成功")
+            return result
+        except Exception:
+            pass
+
     # 最终失败，抛出标准异常
     raise json.JSONDecodeError("JSON解析失败（标准和json5均失败）", text, 0)
+
+
+def _try_fix_incomplete_json(text: str) -> str:
+    """
+    尝试修复不完整的JSON（AI输出被截断的情况）
+    例如：{"options": ["测试" -> {"options": ["测试"]}
+    """
+    if not text.strip():
+        return text
+
+    text = text.strip()
+
+    # 如果以 { 开头，尝试闭合
+    if text.startswith('{'):
+        # 找到最后一个完整的 key-value 对
+        # 匹配 "key": "value" 或 "key": ["array"] 或 "key": {"object"}
+        last_complete_pos = -1
+        brace_count = 0
+        bracket_count = 0
+        in_string = False
+        escape_next = False
+
+        for i, ch in enumerate(text):
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == '\\':
+                escape_next = True
+                continue
+            if ch == '"' and not escape_next:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+
+            if ch == '{':
+                brace_count += 1
+            elif ch == '}':
+                brace_count -= 1
+                if brace_count == 0 and bracket_count == 0:
+                    last_complete_pos = i
+                    break
+            elif ch == '[':
+                bracket_count += 1
+            elif ch == ']':
+                bracket_count -= 1
+                if bracket_count == 0 and brace_count == 1:
+                    last_complete_pos = i
+
+        if last_complete_pos > 0:
+            # 找到了完整的JSON，截断并闭合
+            fixed = text[:last_complete_pos + 1]
+            # 补全未闭合的括号
+            open_braces = text.count('{') - text.count('}')
+            open_brackets = text.count('[') - text.count(']')
+            fixed += '}' * open_braces + ']' * open_brackets
+            logger.info(f"🔧 修复不完整JSON: 原始长度{len(text)} -> 修复后长度{len(fixed)}")
+            return fixed
+
+    return text
