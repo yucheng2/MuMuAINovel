@@ -137,8 +137,26 @@ async def expand_outline_to_chapters(outline_id: str, user_id: str, db: AsyncSes
 
 async def write_chapter_content(chapter_id: str, user_id: str, db: AsyncSession) -> bool:
     """写章节内容"""
-    # TODO: 调用现有的章节生成逻辑
-    pass
+    from app.api.chapters import generate_chapter_content_background
+
+    chapter_result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
+    chapter = chapter_result.scalar_one_or_none()
+    if not chapter:
+        return False
+
+    try:
+        # 调用现有的章节生成逻辑
+        await generate_chapter_content_background(
+            chapter_id=chapter_id,
+            user_id=user_id,
+            project_id=chapter.project_id,
+            force_regenerate=False,
+            target_words=3000
+        )
+        return True
+    except Exception as e:
+        logger.warning(f"章节 {chapter_id} 写作失败: {e}")
+        return False
 
 
 async def auto_write_loop(
