@@ -32,8 +32,9 @@ import './App.css';
 function App() {
   return (
     <>
-      {/* 🧧 春节喜庆装饰 */}
-      <SpringFestival />
+      {/* 🧧 春节喜庆装饰 - 已暂时禁用
+      <SpringFestival /> */}
+
       <BrowserRouter
         future={{
           v7_startTransition: true,
