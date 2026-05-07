@@ -4,9 +4,8 @@ from sqlalchemy import select
 from app.models.background_task import BackgroundTask
 from app.models.project import Project
 from app.services.background_task_service import background_task_service
-from app.services.auto_write_service import auto_write_loop, get_project_word_count
+from app.services.auto_write_service import auto_write_loop, get_project_word_count, get_project
 from app.database import get_db
-from app.middleware.auth_middleware import get_current_user
 from pydantic import BaseModel
 from typing import Optional
 
@@ -31,7 +30,9 @@ async def create_auto_write_task(
     db: AsyncSession = Depends(get_db)
 ):
     """创建自动写作任务"""
-    user_id = await get_current_user(request)
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
 
     # 验证项目存在
     project_result = await db.execute(select(Project).where(Project.id == data.project_id))
@@ -66,7 +67,9 @@ async def stop_auto_write_task(
     db: AsyncSession = Depends(get_db)
 ):
     """停止自动写作任务"""
-    user_id = await get_current_user(request)
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
 
     # 获取任务
     result = await db.execute(
@@ -94,7 +97,9 @@ async def get_auto_write_progress(
     db: AsyncSession = Depends(get_db)
 ):
     """获取自动写作进度"""
-    user_id = await get_current_user(request)
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
 
     result = await db.execute(
         select(BackgroundTask).where(
