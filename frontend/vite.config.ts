@@ -43,11 +43,11 @@ export default defineConfig({
     port: 8888,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://localhost:9999',
         changeOrigin: true,
       },
       '/generated-assets': {
-        target: 'http://localhost:8000',
+        target: 'http://localhost:9999',
         changeOrigin: true,
       }
     }

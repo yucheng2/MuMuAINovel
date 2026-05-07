@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     app_name: str = "MuMuAINovel"
     app_version: str = "1.0.0"
     app_host: str = "0.0.0.0"
-    app_port: int = 8000
+    app_port: int = 9999
     debug: bool = False
     
     # 日志配置
@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     log_backup_count: int = 30  # 保留30个备份文件
     
     # CORS配置
-    cors_origins: list[str] = ["http://localhost:8000", "http://127.0.0.1:8000"]
+    cors_origins: list[str] = ["http://localhost:9999", "http://127.0.0.1:9999"]
     
     # 数据库配置 - PostgreSQL
     database_url: str = DATABASE_URL
