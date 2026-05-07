@@ -280,3 +280,51 @@ export async function generateChapterBackground(
     cancelTask(task_id).catch(() => {});
   };
 }
+
+/**
+ * 创建自动写作任务并轮询进度
+ */
+export async function createAutoWriteTask(
+  projectId: string,
+  onProgress: TaskProgressCallback,
+  onComplete: TaskCompleteCallback,
+  onError: TaskErrorCallback
+): Promise<() => void> {
+  const response = await fetch('/api/writing/auto-write', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: projectId }),
+  });
+
+  if (!response.ok) {
+    throw new Error('创建自动写作任务失败');
+  }
+
+  const { task_id } = await response.json();
+
+  // 轮询任务状态
+  const intervalId = setInterval(async () => {
+    try {
+      const statusResponse = await fetch(`/api/writing/auto-write/${task_id}/progress`);
+      const status = await statusResponse.json();
+
+      if (status.status === 'completed') {
+        clearInterval(intervalId);
+        onComplete(status);
+      } else if (status.status === 'failed') {
+        clearInterval(intervalId);
+        onError(status.error || '任务失败', status);
+      } else {
+        onProgress(status);
+      }
+    } catch (err) {
+      console.error('轮询出错:', err);
+    }
+  }, 2000);
+
+  // 返回取消函数
+  return () => {
+    clearInterval(intervalId);
+    fetch(`/api/writing/auto-write/${task_id}/stop`, { method: 'POST' }).catch(console.error);
+  };
+}
