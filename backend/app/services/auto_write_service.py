@@ -4,7 +4,6 @@ from typing import Optional
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.background_task import BackgroundTask
 from app.models.project import Project
 from app.models.outline import Outline
 from app.models.chapter import Chapter
@@ -229,17 +228,6 @@ async def auto_write_loop(
 
                 await tracker.loading(f"正在分析章节 ({i+1}/3)...")
                 # analyze_chapter_background(chapter_id, user_id, project_id, task_id)
-
-            # 更新进度详情
-            task_result = await db.execute(select(BackgroundTask).where(BackgroundTask.id == task_id))
-            task = task_result.scalar_one_or_none()
-            if task:
-                task.progress_details = {
-                    "current_round": outline.order_index,
-                    "completed_outlines": outline.order_index,
-                    "completed_chapters": len(chapters)
-                }
-                await db.commit()
 
     except Exception as e:
         logger.exception(f"自动写作任务 {task_id} 异常: {e}")
