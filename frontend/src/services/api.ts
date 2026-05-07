@@ -986,6 +986,20 @@ export const inspirationBackgroundApi = {
     const response = await api.post('/inspiration/background', data);
     return response;
   },
+  retryTask: async (taskId: string) => {
+    const response = await api.post('/inspiration/retry', { task_id: taskId });
+    return response;
+  },
+};
+
+export const inspirationAutoApi = {
+  createAutoTask: async (initialIdea: string) => {
+    const response = await api.post<{ initial_idea: string }, { task_id: string; message: string }>(
+      '/inspiration/auto',
+      { initial_idea: initialIdea }
+    );
+    return response;
+  },
 };
 
 export default api;

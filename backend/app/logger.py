@@ -97,7 +97,11 @@ def setup_logging(
         # 确保日志目录存在
         log_file = Path(log_file_path)
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        
+
+        # 每次启动清空日志文件
+        if log_file.exists():
+            log_file.unlink()
+
         # 使用RotatingFileHandler实现日志轮转
         file_handler = RotatingFileHandler(
             filename=log_file_path,

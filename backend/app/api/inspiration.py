@@ -1,4 +1,5 @@
 """灵感模式API - 通过对话引导创建项目"""
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
@@ -8,7 +9,7 @@ import json
 from app.database import get_db
 from app.services.ai_service import AIService
 from app.services.json_helper import loads_json
-from app.api.settings import get_user_ai_service
+from app.api.settings import get_user_ai_service, get_user_ai_service_from_db
 from app.services.prompt_service import PromptService
 from app.services.background_task_service import (
     TaskProgressTracker,
@@ -518,68 +519,229 @@ class InspirationBackgroundResponse(BaseModel):
     message: str
 
 
-async def _run_inspiration_bg(task_id: str, user_id: str, db: AsyncSession, task_input: dict):
+async def _run_inspiration_bg(task_id: str, user_id: str, task_input: dict):
     """后台执行灵感模式创建任务"""
-    tracker = TaskProgressTracker(task_id, user_id, "灵感创建")
+    import asyncio
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from app.database import get_engine
+
+    title = task_input.get("title", "未命名")
+    task_name = f"《{title}》创建中"
+    tracker = TaskProgressTracker(task_id, user_id, task_name)
+
+    async def send_heartbeat(msg: str = None):
+        """发送心跳，防止任务被误判为超时"""
+        await tracker.heartbeat(msg or "心跳中...")
 
     try:
+        # 创建独立的数据库会话
+        engine = await get_engine(user_id)
+        AsyncSessionLocal = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False
+        )
+
         # 导入 wizard_stream 服务
         from app.services.wizard_stream_service import WizardStreamService
+        from app.api.settings import get_user_ai_service_from_db
 
-        service = WizardStreamService(db)
+        async with AsyncSessionLocal() as db:
+            # 获取用户AI服务实例
+            user_ai_service = await get_user_ai_service_from_db(user_id, db)
+            service = WizardStreamService(db, user_ai_service)
 
-        # 阶段1: 项目创建 + 世界观 (0-25%)
-        await tracker.start("开始创建项目...")
-        await tracker.loading("创建项目中...", 0.1)
+            # 阶段1: 项目创建 + 世界观 (0-25%)
+            await tracker.start(f"《{title}》创建中...")
 
-        world_result = await service.generate_world_building(
-            user_id=user_id,
-            title=task_input["title"],
-            description=task_input["description"],
-            theme=task_input["theme"],
-            genre=task_input["genre"],
-            narrative_perspective=task_input["narrative_perspective"],
-            target_words=DEFAULT_TARGET_WORDS,
-            chapter_count=DEFAULT_CHAPTER_COUNT,
-            character_count=DEFAULT_CHARACTER_COUNT,
-            outline_mode=task_input["outline_mode"],
-        )
-        project_id = world_result["project_id"]
+            # 检查是否已有 project_id（重试时）
+            existing_project_id = task_input.get("project_id")
+            if existing_project_id:
+                project_id = existing_project_id
+                await tracker.loading(f"《{title}》已存在，跳过项目创建...", 0.1)
+                await send_heartbeat(f"《{title}》跳过项目创建...")
+            else:
+                await tracker.loading("创建项目中...", 0.1)
+                await send_heartbeat(f"《{title}》创建中...")
 
-        await tracker.loading("世界观生成完成", 0.25)
-        tracker.check_cancelled()
+                world_result = await service.generate_world_building({
+                    "user_id": user_id,
+                    "title": title,
+                    "description": task_input.get("description", ""),
+                    "theme": task_input.get("theme", ""),
+                    "genre": task_input.get("genre", "都市"),
+                    "narrative_perspective": task_input.get("narrative_perspective", "第一人称"),
+                    "target_words": DEFAULT_TARGET_WORDS,
+                    "chapter_count": DEFAULT_CHAPTER_COUNT,
+                    "character_count": DEFAULT_CHARACTER_COUNT,
+                    "outline_mode": task_input.get("outline_mode", "one-to-one"),
+                })
+                project_id = world_result["project_id"]
 
-        # 阶段2: 职业体系 (25-50%)
-        await tracker.loading("生成职业体系中...", 0.3)
-        await service.generate_career_system(project_id=project_id, user_id=user_id)
-        await tracker.loading("职业体系生成完成", 0.5)
-        tracker.check_cancelled()
+            # 保存 project_id 到 task_input，以便重试时使用
+            from sqlalchemy import update
+            from app.models.background_task import BackgroundTask
+            await db.execute(
+                update(BackgroundTask)
+                .where(BackgroundTask.id == task_id)
+                .values(task_input={**task_input, "project_id": project_id})
+            )
+            await db.commit()
 
-        # 阶段3: 角色生成 (50-75%)
-        await tracker.loading("生成角色中...", 0.55)
-        await service.generate_characters(
-            project_id=project_id,
-            user_id=user_id,
-            count=DEFAULT_CHARACTER_COUNT,
-        )
-        await tracker.loading("角色生成完成", 0.75)
-        tracker.check_cancelled()
+            await tracker.loading(f"《{title}》世界观生成完成", 0.25)
+            await send_heartbeat(f"《{title}》世界观生成完成")
 
-        # 阶段4: 大纲生成 (75-100%)
-        await tracker.loading("生成大纲中...", 0.8)
-        await service.generate_outline(
-            project_id=project_id,
-            user_id=user_id,
-            chapter_count=DEFAULT_CHAPTER_COUNT,
-            narrative_perspective=task_input["narrative_perspective"],
-            target_words=DEFAULT_TARGET_WORDS,
-        )
-        await tracker.loading("大纲生成完成", 0.95)
+            # 阶段2: 职业体系 (25-50%)
+            await tracker.loading("生成职业体系中...", 0.3)
+            await send_heartbeat("生成职业体系中...")
+            await service.generate_career_system({
+                "project_id": project_id,
+                "user_id": user_id,
+            })
+            await tracker.loading(f"《{title}》职业体系生成完成", 0.5)
+            await send_heartbeat(f"《{title}》职业体系生成完成")
 
-        await tracker.complete("项目创建完成！")
+            # 阶段3: 角色生成 (50-75%)
+            await tracker.loading("生成角色中...", 0.55)
+            await send_heartbeat("生成角色中...")
+            await service.generate_characters({
+                "project_id": project_id,
+                "user_id": user_id,
+                "count": DEFAULT_CHARACTER_COUNT,
+            })
+            await tracker.loading(f"《{title}》角色生成完成", 0.75)
+            await send_heartbeat(f"《{title}》角色生成完成")
+
+            # 阶段4: 大纲生成 (75-100%)
+            await tracker.loading("生成大纲中...", 0.8)
+            await send_heartbeat("生成大纲中...")
+            await service.generate_outline({
+                "project_id": project_id,
+                "user_id": user_id,
+                "chapter_count": DEFAULT_CHAPTER_COUNT,
+                "narrative_perspective": task_input.get("narrative_perspective", "第一人称"),
+                "target_words": DEFAULT_TARGET_WORDS,
+            })
+            await tracker.loading(f"《{title}》大纲生成完成", 0.95)
+
+            await tracker.complete(f"《{title}》创建成功！")
 
     except Exception as e:
         logger.error(f"灵感模式后台任务失败: {e}")
+        await tracker.error(str(e))
+        raise
+
+
+async def _run_inspiration_auto_bg(task_id: str, user_id: str, task_input: dict):
+    """后台执行一键灵感模式：AI生成所有答案后创建项目"""
+    import asyncio
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from app.database import get_engine
+
+    initial_idea = task_input.get("initial_idea", "")
+    task_name = "灵感后台创建中"
+    tracker = TaskProgressTracker(task_id, user_id, task_name)
+
+    async def send_heartbeat(msg: str = None):
+        await tracker.heartbeat(msg or "心跳中...")
+
+    try:
+        # 创建独立的数据库会话
+        engine = await get_engine(user_id)
+        AsyncSessionLocal = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False
+        )
+
+        # 导入必要的服务
+        from app.services.wizard_stream_service import WizardStreamService
+        from app.api.settings import get_user_ai_service_from_db
+
+        async with AsyncSessionLocal() as db:
+            # 获取用户AI服务实例
+            ai_service = await get_user_ai_service_from_db(user_id, db)
+
+            context = {
+                "initial_idea": initial_idea,
+                "title": "",
+                "description": "",
+                "theme": ""
+            }
+
+            # 阶段0: AI生成标题 (0-10%)
+            await tracker.start("灵感后台创建中...")
+            await tracker.loading("AI生成标题中...", 0.02)
+            await send_heartbeat("AI生成标题中...")
+            try:
+                title = await _generate_single_option("title", context, user_id, db, ai_service)
+                context["title"] = title
+            except Exception as e:
+                logger.error(f"标题生成失败: {e}")
+                raise Exception(f"标题生成失败: {str(e)}")
+
+            # 阶段0: AI生成简介 (10-20%)
+            await tracker.loading(f"《{title}》AI生成简介中...", 0.05)
+            await send_heartbeat("AI生成简介中...")
+            try:
+                description = await _generate_single_option("description", context, user_id, db, ai_service)
+                context["description"] = description
+            except Exception as e:
+                logger.error(f"简介生成失败: {e}")
+                raise Exception(f"简介生成失败: {str(e)}")
+
+            # 阶段0: AI生成主题 (20-30%)
+            await tracker.loading(f"《{title}》AI生成主题中...", 0.08)
+            await send_heartbeat("AI生成主题中...")
+            try:
+                theme = await _generate_single_option("theme", context, user_id, db, ai_service)
+                context["theme"] = theme
+            except Exception as e:
+                logger.error(f"主题生成失败: {e}")
+                raise Exception(f"主题生成失败: {str(e)}")
+
+            # 阶段0: AI生成类型 (30-40%) - 多选标签
+            await tracker.loading(f"《{title}》AI生成类型中...", 0.12)
+            await send_heartbeat("AI生成类型中...")
+            try:
+                genre_list = await _generate_genre_options(context, user_id, db, ai_service)
+                # 取前3个标签作为默认选中
+                genre = genre_list[:3] if len(genre_list) >= 3 else genre_list
+            except Exception as e:
+                logger.error(f"类型生成失败: {e}")
+                genre = ["都市"]  # 默认类型
+
+            # 将 genre 数组转为逗号分隔的字符串
+            genre_str = ", ".join(genre) if isinstance(genre, list) else genre
+
+            logger.info(f"AI生成完成: title={title}, description={description}, theme={theme}, genre={genre_str}")
+
+            # 构建完整的 task_input 传递给 _run_inspiration_bg
+            final_task_input = {
+                "title": title,
+                "description": description,
+                "theme": theme,
+                "genre": genre_str,  # 转为字符串
+                "narrative_perspective": "第一人称",
+                "outline_mode": "one-to-one",
+                "user_id": user_id,
+            }
+
+            # 将完整的 task_input 更新到数据库，以便重试时使用
+            from sqlalchemy import update
+            from app.models.background_task import BackgroundTask
+            await db.execute(
+                update(BackgroundTask)
+                .where(BackgroundTask.id == task_id)
+                .values(task_input=final_task_input)
+            )
+            await db.commit()
+
+        # 关闭当前 db session，调用 _run_inspiration_bg（它会创建自己的 session）
+        await tracker.loading(f"《{title}》开始创建项目...", 0.15)
+        await send_heartbeat(f"《{title}》开始创建项目...")
+
+        # 调用现有的 _run_inspiration_bg 执行项目创建
+        await _run_inspiration_bg(task_id, user_id, final_task_input)
+
+    except Exception as e:
+        logger.error(f"灵感后台自动创建任务失败: {e}")
         await tracker.error(str(e))
         raise
 
@@ -611,11 +773,213 @@ async def create_inspiration_background_task(
         task.id,
         user_id,
         _run_inspiration_bg,
-        db=db,
         task_input=task_input,
+        task_type="inspiration",
     )
 
     return InspirationBackgroundResponse(
+        task_id=task.id,
+        message="后台任务已创建",
+    )
+
+
+class InspirationRetryRequest(BaseModel):
+    task_id: str
+
+
+class InspirationRetryResponse(BaseModel):
+    task_id: str
+    message: str
+
+
+async def _generate_single_option(
+    step: str,
+    context: Dict[str, Any],
+    user_id: str,
+    db: AsyncSession,
+    ai_service: AIService
+) -> str:
+    """内部辅助函数：生成单个选项（不重试）"""
+    template_key_map = {
+        "title": ("INSPIRATION_TITLE_SYSTEM", "INSPIRATION_TITLE_USER"),
+        "description": ("INSPIRATION_DESCRIPTION_SYSTEM", "INSPIRATION_DESCRIPTION_USER"),
+        "theme": ("INSPIRATION_THEME_SYSTEM", "INSPIRATION_THEME_USER"),
+        "genre": ("INSPIRATION_GENRE_SYSTEM", "INSPIRATION_GENRE_USER")
+    }
+    template_keys = template_key_map.get(step)
+    if not template_keys:
+        raise ValueError(f"不支持的步骤: {step}")
+
+    system_key, user_key = template_keys
+    system_template = await PromptService.get_template(system_key, user_id, db)
+    user_template = await PromptService.get_template(user_key, user_id, db)
+
+    format_params = {
+        "initial_idea": context.get("initial_idea", context.get("description", "")),
+        "title": context.get("title", ""),
+        "description": context.get("description", ""),
+        "theme": context.get("theme", "")
+    }
+    system_prompt = system_template.format(**format_params)
+    user_prompt = user_template.format(**format_params)
+
+    temperature = TEMPERATURE_SETTINGS.get(step, 0.7)
+    accumulated_text = ""
+    async for chunk in ai_service.generate_text_stream(
+        prompt=user_prompt,
+        system_prompt=system_prompt,
+        temperature=temperature
+    ):
+        accumulated_text += chunk
+
+    cleaned_content = ai_service._clean_json_response(accumulated_text)
+    result = loads_json(cleaned_content)
+
+    if "options" in result and result["options"]:
+        return result["options"][0]
+    raise ValueError(f"生成{step}失败")
+
+
+async def _generate_genre_options(
+    context: Dict[str, Any],
+    user_id: str,
+    db: AsyncSession,
+    ai_service: AIService
+) -> list:
+    """内部辅助函数：生成类型选项列表（用于多选）"""
+    template_key_map = {
+        "genre": ("INSPIRATION_GENRE_SYSTEM", "INSPIRATION_GENRE_USER")
+    }
+    template_keys = template_key_map.get("genre")
+    if not template_keys:
+        raise ValueError("不支持的步骤: genre")
+
+    system_key, user_key = template_keys
+    system_template = await PromptService.get_template(system_key, user_id, db)
+    user_template = await PromptService.get_template(user_key, user_id, db)
+
+    format_params = {
+        "initial_idea": context.get("initial_idea", context.get("description", "")),
+        "title": context.get("title", ""),
+        "description": context.get("description", ""),
+        "theme": context.get("theme", "")
+    }
+    system_prompt = system_template.format(**format_params)
+    user_prompt = user_template.format(**format_params)
+
+    temperature = TEMPERATURE_SETTINGS.get("genre", 0.7)
+    accumulated_text = ""
+    async for chunk in ai_service.generate_text_stream(
+        prompt=user_prompt,
+        system_prompt=system_prompt,
+        temperature=temperature
+    ):
+        accumulated_text += chunk
+
+    cleaned_content = ai_service._clean_json_response(accumulated_text)
+    result = loads_json(cleaned_content)
+
+    if "options" in result and result["options"]:
+        return result["options"]
+    raise ValueError("生成genre失败")
+
+
+class InspirationAutoRequest(BaseModel):
+    initial_idea: str
+
+
+class InspirationAutoResponse(BaseModel):
+    task_id: str
+    message: str
+
+
+@router.post("/retry", response_model=InspirationRetryResponse)
+async def retry_inspiration_task(
+    data: InspirationRetryRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """重试失败的灵感创建任务"""
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    # 获取原任务
+    old_task = await BackgroundTaskService.get_task(data.task_id, user_id, db)
+    if not old_task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    if old_task.task_type != "inspiration":
+        raise HTTPException(status_code=400, detail="只能重试灵感创建任务")
+
+    if old_task.status == "running":
+        raise HTTPException(status_code=400, detail="任务正在运行中，无法重试")
+
+    # 保存原任务的 task_input
+    task_input = old_task.task_input or {}
+    task_input["user_id"] = user_id
+
+    # 删除旧任务
+    await db.delete(old_task)
+    await db.commit()
+
+    # 创建新任务，使用原任务的 task_input
+    task = await BackgroundTaskService.create_task(
+        user_id=user_id,
+        project_id=None,
+        task_type="inspiration",
+        task_input=task_input,
+        db=db,
+    )
+
+    await background_task_service.spawn_background_task(
+        task.id,
+        user_id,
+        _run_inspiration_bg,
+        task_input=task_input,
+        task_type="inspiration",
+    )
+
+    return InspirationRetryResponse(
+        task_id=task.id,
+        message="任务已重新创建",
+    )
+
+
+@router.post("/auto", response_model=InspirationAutoResponse)
+async def create_inspiration_auto_task(
+    data: InspirationAutoRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """一键灵感后台模式：AI自动生成所有答案并创建后台任务"""
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    # 创建后台任务，只传递 initial_idea
+    task_input = {
+        "initial_idea": data.initial_idea,
+    }
+
+    task = await BackgroundTaskService.create_task(
+        user_id=user_id,
+        project_id=None,
+        task_type="inspiration",
+        task_input=task_input,
+        db=db,
+    )
+
+    task_input["user_id"] = user_id
+    await background_task_service.spawn_background_task(
+        task.id,
+        user_id,
+        _run_inspiration_auto_bg,
+        task_input=task_input,
+        task_type="inspiration",
+    )
+
+    return InspirationAutoResponse(
         task_id=task.id,
         message="后台任务已创建",
     )

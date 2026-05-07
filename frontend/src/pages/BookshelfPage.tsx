@@ -1,9 +1,10 @@
-import { Card, Button, Spin, Space, Tag, Typography, Alert, theme } from 'antd';
-import { BookOutlined, RocketOutlined, BulbOutlined, UploadOutlined, DownloadOutlined, LoadingOutlined, CalendarOutlined, DeleteOutlined, CheckCircleOutlined, EditOutlined, PauseCircleOutlined, PictureOutlined, SwapOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Card, Button, Spin, Space, Tag, Typography, Alert, theme, Checkbox, Dropdown, Popconfirm } from 'antd';
+import { BookOutlined, RocketOutlined, BulbOutlined, ThunderboltOutlined, UploadOutlined, DownloadOutlined, LoadingOutlined, CalendarOutlined, DeleteOutlined, CheckCircleOutlined, EditOutlined, PauseCircleOutlined, PictureOutlined, SwapOutlined, ReloadOutlined, MoreOutlined } from '@ant-design/icons';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Project } from '../types';
 import { bookshelfCardStyles, bookshelfCardHoverHandlers } from '../components/CardStyles';
+import { InspirationAutoModal } from '../components/InspirationAutoModal';
 import { useThemeMode } from '../theme/useThemeMode';
 
 const { Paragraph } = Typography;
@@ -30,6 +31,15 @@ interface BookshelfPageProps {
   getDisplayStatus: (status: string, progress: number) => string;
   getStatusTag: (status: string) => ReactNode;
   formatDate: (dateString: string) => string;
+  // 批量选择相关
+  selectedProjectIds?: string[];
+  onToggleProjectSelection?: (projectId: string) => void;
+  onToggleAllSelection?: () => void;
+  onBatchDelete?: (projectIds: string[]) => void;
+  onBatchGenerateCover?: (projectIds: string[]) => void;
+  selectionMode?: boolean;
+  setSelectionMode?: (mode: boolean) => void;
+  setSelectedProjectIds?: (ids: string[]) => void;
 }
 
 export default function BookshelfPage({
@@ -53,6 +63,14 @@ export default function BookshelfPage({
   getProgressColor,
   getDisplayStatus,
   formatDate,
+  selectedProjectIds = [],
+  onToggleProjectSelection,
+  onToggleAllSelection,
+  onBatchDelete,
+  onBatchGenerateCover,
+  selectionMode = false,
+  setSelectionMode,
+  setSelectedProjectIds,
 }: BookshelfPageProps) {
   const { token } = theme.useToken();
   const { resolvedMode } = useThemeMode();
@@ -69,6 +87,7 @@ export default function BookshelfPage({
   };
   const [flippedProjectIds, setFlippedProjectIds] = useState<Record<string, boolean>>({});
   const [coverGeneratingIds, setCoverGeneratingIds] = useState<Record<string, boolean>>({});
+  const [isInspirationAutoOpen, setIsInspirationAutoOpen] = useState(false);
   const mobileBookHeight = 520;
   const desktopBookHeight = 520;
   const mobileSpineWidth = 32;
@@ -253,6 +272,84 @@ export default function BookshelfPage({
       )}
 
       <Spin spinning={loading}>
+        {/* 选择模式切换栏 */}
+        {!selectionMode && Array.isArray(projects) && projects.length > 0 && (
+          <div style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            marginBottom: 8,
+          }}>
+            <Button
+              size="small"
+              type="text"
+              icon={<CheckCircleOutlined />}
+              onClick={() => setSelectionMode?.(true)}
+              style={{ color: token.colorTextSecondary }}
+            >
+              选择
+            </Button>
+          </div>
+        )}
+        {selectionMode && Array.isArray(projects) && projects.length > 0 && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '8px 12px',
+            marginBottom: 8,
+            background: token.colorBgContainer,
+            borderRadius: 8,
+            border: `1px solid ${token.colorBorder}`,
+          }}>
+            <Space>
+              <Checkbox
+                checked={selectedProjectIds.length === projects.length && projects.length > 0}
+                indeterminate={selectedProjectIds.length > 0 && selectedProjectIds.length < projects.length}
+                onChange={onToggleAllSelection}
+              >
+                <span style={{ fontWeight: 500 }}>
+                  全选 ({selectedProjectIds.length}/{projects.length})
+                </span>
+              </Checkbox>
+
+              {selectedProjectIds.length > 0 && (
+                <>
+                  <Button
+                    size="small"
+                    icon={<PictureOutlined />}
+                    onClick={() => onBatchGenerateCover?.(selectedProjectIds)}
+                  >
+                    批量生成封面
+                  </Button>
+                  <Popconfirm
+                    title="确认删除选中的项目？"
+                    description={`将删除 ${selectedProjectIds.length} 个项目，此操作不可恢复`}
+                    onConfirm={() => onBatchDelete?.(selectedProjectIds)}
+                    okText="确认"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                  >
+                    <Button size="small" danger icon={<DeleteOutlined />}>
+                      批量删除
+                    </Button>
+                  </Popconfirm>
+                </>
+              )}
+            </Space>
+
+            <Button
+              size="small"
+              type="text"
+              onClick={() => {
+                setSelectionMode?.(false);
+                setSelectedProjectIds?.([]);
+              }}
+              style={{ color: token.colorTextSecondary }}
+            >
+              取消选择
+            </Button>
+          </div>
+        )}
         <div style={{
           ...bookshelfCardStyles.container,
           borderRadius: isMobile ? 12 : 16,
@@ -340,6 +437,22 @@ export default function BookshelfPage({
                   >
                     灵感模式
                   </Button>
+                  <Button
+                    size={isMobile ? 'middle' : 'large'}
+                    icon={<ThunderboltOutlined />}
+                    onClick={() => setIsInspirationAutoOpen(true)}
+                    style={{
+                      height: isMobile ? 42 : 52,
+                      fontSize: isMobile ? '14px' : '16px',
+                      borderRadius: 10,
+                      borderColor: alphaColor(token.colorWarning, isDark ? 0.34 : 0.5),
+                      color: `color-mix(in srgb, ${token.colorWarning} ${isDark ? 78 : 72}%, ${token.colorText} ${isDark ? 22 : 28}%)`,
+                      background: `linear-gradient(180deg, ${alphaColor(token.colorWarning, isDark ? 0.12 : 0.12)} 0%, ${alphaColor(token.colorWarning, isDark ? 0.2 : 0.2)} 100%)`,
+                    }}
+                    block
+                  >
+                    灵感后台
+                  </Button>
                 </div>
 
                 <div style={{
@@ -418,6 +531,23 @@ export default function BookshelfPage({
                   }}>
                     {ribbonStatusIcon}
                   </div>
+
+                  {/* 批量选择模式的复选框 */}
+                  {selectionMode && (
+                    <div style={{
+                      position: 'absolute',
+                      top: isMobile ? 8 : 10,
+                      left: isMobile ? 8 : 10,
+                      zIndex: 10,
+                    }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Checkbox
+                        checked={selectedProjectIds.includes(project.id)}
+                        onChange={() => onToggleProjectSelection?.(project.id)}
+                      />
+                    </div>
+                  )}
 
                   <div style={{
                     position: 'relative',
@@ -942,6 +1072,10 @@ export default function BookshelfPage({
           })}
         </div>
       </Spin>
+      <InspirationAutoModal
+        open={isInspirationAutoOpen}
+        onClose={() => setIsInspirationAutoOpen(false)}
+      />
     </div>
   );
 }

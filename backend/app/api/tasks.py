@@ -14,57 +14,41 @@ router = APIRouter(prefix="/tasks", tags=["后台任务"])
 logger = get_logger(__name__)
 
 
-@router.get("/{task_id}", summary="获取任务状态")
-async def get_task_status(
-    task_id: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db)
-):
-    """获取后台任务的状态和进度"""
-    user_id = getattr(request.state, 'user_id', None)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="未登录")
-
-    task = await background_task_service.get_task(task_id, user_id, db)
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
-
-    return {
-        "id": task.id,
-        "task_type": task.task_type,
-        "project_id": task.project_id,
-        "status": task.status,
-        "progress": task.progress,
-        "status_message": task.status_message,
-        "progress_details": task.progress_details,
-        "error_message": task.error_message,
-        "task_result": task.task_result,
-        "retry_count": task.retry_count,
-        "cancel_requested": task.cancel_requested,
-        "created_at": task.created_at.isoformat() if task.created_at else None,
-        "started_at": task.started_at.isoformat() if task.started_at else None,
-        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
-        "updated_at": task.updated_at.isoformat() if task.updated_at else None,
-    }
-
+# ========== 特定路由必须放在 /{task_id} 之前 ==========
 
 @router.get("", summary="获取任务列表")
 async def get_tasks(
-    project_id: str,
     request: Request,
+    project_id: Optional[str] = None,
     task_type: Optional[str] = None,
     limit: int = 20,
     db: AsyncSession = Depends(get_db)
 ):
-    """获取项目的后台任务列表（合并 BackgroundTask 和 BatchGenerationTask）"""
+    """获取项目的后台任务列表（合并 BackgroundTask 和 BatchGenerationTask）
+
+    如果不提供 project_id，则返回该用户所有任务（包括无项目的灵感任务）
+    """
     user_id = getattr(request.state, 'user_id', None)
     if not user_id:
         raise HTTPException(status_code=401, detail="未登录")
 
     # 查询 BackgroundTask
-    bg_tasks = await background_task_service.get_project_tasks(
-        project_id, user_id, db, task_type=task_type, limit=limit
-    )
+    if project_id:
+        bg_tasks = await background_task_service.get_project_tasks(
+            project_id, user_id, db, task_type=task_type, limit=limit
+        )
+    else:
+        # 获取用户所有任务（包括无项目的灵感任务）
+        query = (
+            select(BackgroundTask)
+            .where(BackgroundTask.user_id == user_id)
+            .order_by(BackgroundTask.created_at.desc())
+        )
+        if task_type:
+            query = query.where(BackgroundTask.task_type == task_type)
+        query = query.limit(limit)
+        result = await db.execute(query)
+        bg_tasks = result.scalars().all()
 
     items = [
         {
@@ -127,6 +111,113 @@ async def get_tasks(
     return {"items": items[:limit]}
 
 
+@router.delete("/clear", summary="清理所有已结束的任务记录")
+async def clear_all_finished_tasks(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """清理该用户所有已完成/失败/已取消的任务记录（包括无项目的灵感任务）"""
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    from sqlalchemy import delete as sql_delete
+
+    # 清理 BackgroundTask（包括无 project_id 的任务）
+    bg_result = await db.execute(
+        sql_delete(BackgroundTask).where(
+            BackgroundTask.user_id == user_id,
+            BackgroundTask.status.in_(["completed", "failed", "cancelled"])
+        )
+    )
+
+    # 清理 BatchGenerationTask
+    batch_result = await db.execute(
+        sql_delete(BatchGenerationTask).where(
+            BatchGenerationTask.user_id == user_id,
+            BatchGenerationTask.status.in_(["completed", "failed", "cancelled"])
+        )
+    )
+
+    await db.commit()
+
+    total = (bg_result.rowcount or 0) + (batch_result.rowcount or 0)
+    return {"message": f"已清理 {total} 条任务记录", "deleted_count": total}
+
+
+@router.delete("/project/{project_id}/clear", summary="清理项目已结束的任务记录")
+async def clear_project_tasks(
+    project_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """清理项目中已完成/失败/已取消的任务记录"""
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    from sqlalchemy import delete as sql_delete
+
+    # 清理 BackgroundTask
+    bg_result = await db.execute(
+        sql_delete(BackgroundTask).where(
+            BackgroundTask.project_id == project_id,
+            BackgroundTask.user_id == user_id,
+            BackgroundTask.status.in_(["completed", "failed", "cancelled"])
+        )
+    )
+
+    # 清理 BatchGenerationTask
+    batch_result = await db.execute(
+        sql_delete(BatchGenerationTask).where(
+            BatchGenerationTask.project_id == project_id,
+            BatchGenerationTask.user_id == user_id,
+            BatchGenerationTask.status.in_(["completed", "failed", "cancelled"])
+        )
+    )
+
+    await db.commit()
+
+    total = (bg_result.rowcount or 0) + (batch_result.rowcount or 0)
+    return {"message": f"已清理 {total} 条任务记录", "deleted_count": total}
+
+
+# ========== 需要 task_id 的路由放在后面 ==========
+
+@router.get("/{task_id}", summary="获取任务状态")
+async def get_task_status(
+    task_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """获取后台任务的状态和进度"""
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    task = await background_task_service.get_task(task_id, user_id, db)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    return {
+        "id": task.id,
+        "task_type": task.task_type,
+        "project_id": task.project_id,
+        "status": task.status,
+        "progress": task.progress,
+        "status_message": task.status_message,
+        "progress_details": task.progress_details,
+        "error_message": task.error_message,
+        "task_result": task.task_result,
+        "retry_count": task.retry_count,
+        "cancel_requested": task.cancel_requested,
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+    }
+
+
 @router.post("/{task_id}/cancel", summary="取消任务")
 async def cancel_task(
     task_id: str,
@@ -181,40 +272,3 @@ async def delete_task(
         return {"message": "任务记录已删除"}
 
     raise HTTPException(status_code=404, detail="任务不存在")
-
-
-@router.delete("/project/{project_id}/clear", summary="清理项目已结束的任务记录")
-async def clear_project_tasks(
-    project_id: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db)
-):
-    """清理项目中已完成/失败/已取消的任务记录"""
-    user_id = getattr(request.state, 'user_id', None)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="未登录")
-
-    from sqlalchemy import delete as sql_delete
-
-    # 清理 BackgroundTask
-    bg_result = await db.execute(
-        sql_delete(BackgroundTask).where(
-            BackgroundTask.project_id == project_id,
-            BackgroundTask.user_id == user_id,
-            BackgroundTask.status.in_(["completed", "failed", "cancelled"])
-        )
-    )
-
-    # 清理 BatchGenerationTask
-    batch_result = await db.execute(
-        sql_delete(BatchGenerationTask).where(
-            BatchGenerationTask.project_id == project_id,
-            BatchGenerationTask.user_id == user_id,
-            BatchGenerationTask.status.in_(["completed", "failed", "cancelled"])
-        )
-    )
-
-    await db.commit()
-
-    total = (bg_result.rowcount or 0) + (batch_result.rowcount or 0)
-    return {"message": f"已清理 {total} 条任务记录", "deleted_count": total}

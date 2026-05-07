@@ -111,6 +111,10 @@ class TaskProgressTracker:
         )
 
     async def error(self, error_message: str):
+        # 截断过长的错误信息，避免数据库字段溢出
+        max_length = 500
+        if len(error_message) > max_length:
+            error_message = error_message[:max_length] + "..."
         await self._update_task(
             status="failed", error_message=error_message,
             status_message=f"失败: {error_message}",
@@ -129,6 +133,12 @@ class TaskProgressTracker:
         await self._update_task(
             status_message=msg, retry_count=retry_count,
             progress_details={"stage": "retry", "message": msg, "retry_count": retry_count}
+        )
+
+    async def heartbeat(self, message: str = None):
+        """发送心跳，保持任务活跃状态"""
+        await self._update_task(
+            progress_details={"stage": "heartbeat", "message": message or "心跳中..."}
         )
 
     def reset_generating_progress(self):
@@ -153,11 +163,19 @@ class TaskProgressTracker:
 
 
 class BackgroundTaskService:
-    """后台任务管理服务（按用户排队：同用户任务逐个执行，不同用户可并发）"""
+    """后台任务管理服务（按用户排队：同用户任务逐个执行，不同用户可并发）
+
+    灵感创建任务使用独立的并发控制，不受用户排队限制。
+    """
+
+    # 灵感任务并发限制（可配置）
+    INSPIRATION_CONCURRENCY_LIMIT = 5
 
     def __init__(self):
         self._user_queues: Dict[str, asyncio.Queue] = {}   # user_id -> Queue
         self._user_workers: Dict[str, bool] = {}            # user_id -> worker是否运行中
+        self._inspiration_semaphore = asyncio.Semaphore(self.INSPIRATION_CONCURRENCY_LIMIT)
+        self._inspiration_active_count = 0
 
     def _ensure_user_queue(self, user_id: str) -> asyncio.Queue:
         """确保指定用户的队列已初始化"""
@@ -224,7 +242,7 @@ class BackgroundTaskService:
     @staticmethod
     async def create_task(
         user_id: str,
-        project_id: str,
+        project_id: Optional[str],
         task_type: str,
         task_input: Dict[str, Any] = None,
         db: AsyncSession = None
@@ -242,7 +260,7 @@ class BackgroundTaskService:
         db.add(task)
         await db.commit()
         await db.refresh(task)
-        logger.info(f"📋 创建后台任务: {task.id[:8]} type={task_type} project={project_id[:8]}")
+        logger.info(f"📋 创建后台任务: {task.id[:8]} type={task_type} project={project_id[:8] if project_id else 'None'}")
         return task
 
     @staticmethod
@@ -321,17 +339,25 @@ class BackgroundTaskService:
         user_id: str,
         task_func: Callable[..., Awaitable],
         *args,
+        task_type: str = None,
         **kwargs
     ):
         """
         将任务加入该用户的队列排队执行（同一用户FIFO，不同用户可并发）
-        
+
+        灵感创建任务(task_type="inspiration")使用独立的并发控制，不受用户排队限制。
+
         Args:
             task_id: 任务ID
             user_id: 用户ID
             task_func: 异步任务函数
+            task_type: 任务类型（如果是"inspiration"则使用独立并发控制）
             *args, **kwargs: 传递给task_func的参数
         """
+        # 灵感任务使用独立的并发控制
+        if task_type == "inspiration":
+            await self._spawn_inspiration_task(task_id, user_id, task_func, *args, **kwargs)
+            return
         # 确保该用户的队列和工作协程已启动
         queue = self._ensure_user_queue(user_id)
         await self._start_user_worker(user_id)
@@ -368,6 +394,37 @@ class BackgroundTaskService:
         except Exception as e:
             logger.error(f"更新队列位置信息失败: {e}")
 
+    async def _spawn_inspiration_task(
+        self,
+        task_id: str,
+        user_id: str,
+        task_func: Callable[..., Awaitable],
+        *args,
+        **kwargs
+    ):
+        """使用信号量控制并发执行灵感任务（后台运行，不阻塞API响应）"""
+        async with self._inspiration_semaphore:
+            self._inspiration_active_count += 1
+            logger.info(f"🚀 灵感任务开始执行: {task_id[:8]} (并发数: {self._inspiration_active_count}/{self.INSPIRATION_CONCURRENCY_LIMIT})")
+
+            # 后台运行任务，不等待完成
+            asyncio.create_task(self._run_inspiration_task(task_id, user_id, task_func, *args, **kwargs))
+
+    async def _run_inspiration_task(
+        self,
+        task_id: str,
+        user_id: str,
+        task_func: Callable[..., Awaitable],
+        *args,
+        **kwargs
+    ):
+        """实际执行灵感任务的内部方法"""
+        try:
+            await task_func(task_id, user_id, *args, **kwargs)
+        finally:
+            self._inspiration_active_count -= 1
+            logger.info(f"🏁 灵感任务完成: {task_id[:8]} (并发数: {self._inspiration_active_count}/{self.INSPIRATION_CONCURRENCY_LIMIT})")
+
     def get_queue_size(self, user_id: str = None) -> int:
         """获取队列中等待的任务数量"""
         if user_id:
@@ -381,6 +438,80 @@ class BackgroundTaskService:
         return {
             uid: q.qsize() for uid, q in self._user_queues.items() if q.qsize() > 0
         }
+
+    async def recover_stale_tasks(self, stale_minutes: int = 5):
+        """恢复超时任务 - 后端重启后调用，将超时的running任务标记为失败"""
+        from sqlalchemy import select, update, distinct
+        from app.models.background_task import BackgroundTask
+        from app.database import get_engine
+        from datetime import datetime, timedelta
+
+        # 查找所有超时的 running 任务（使用 system 引擎查询）
+        cutoff = datetime.now() - timedelta(minutes=stale_minutes)
+
+        try:
+            # 使用 system 引擎查询所有超时任务
+            system_engine = await get_engine("system")
+            SystemSession = async_sessionmaker(
+                system_engine, class_=AsyncSession, expire_on_commit=False
+            )
+            async with SystemSession() as session:
+                # 查找所有超时的 running 和 pending 任务
+                result = await session.execute(
+                    select(BackgroundTask).where(
+                        BackgroundTask.status.in_(["running", "pending"]),
+                        BackgroundTask.updated_at < cutoff
+                    )
+                )
+                stale_tasks = result.scalars().all()
+
+                if not stale_tasks:
+                    logger.info("没有需要恢复的超时任务")
+                    return
+
+                # 按用户分组
+                user_tasks: Dict[str, list] = {}
+                for task in stale_tasks:
+                    if task.user_id not in user_tasks:
+                        user_tasks[task.user_id] = []
+                    user_tasks[task.user_id].append(task)
+
+                logger.info(f"发现 {len(stale_tasks)} 个超时任务，涉及 {len(user_tasks)} 个用户")
+
+                # 为每个用户更新任务状态
+                for user_id, tasks in user_tasks.items():
+                    try:
+                        user_engine = await get_engine(user_id)
+                        UserSession = async_sessionmaker(
+                            user_engine, class_=AsyncSession, expire_on_commit=False
+                        )
+                        async with UserSession() as user_session:
+                            # 在用户会话中重新查询并更新任务
+                            for task in tasks:
+                                result = await user_session.execute(
+                                    select(BackgroundTask).where(BackgroundTask.id == task.id)
+                                )
+                                db_task = result.scalar_one_or_none()
+                                if db_task:
+                                    # running 任务标记为失败，pending 任务标记为取消
+                                    if db_task.status == "running":
+                                        db_task.status = "failed"
+                                        db_task.error_message = "任务超时（服务端重启后自动恢复）"
+                                        db_task.status_message = "任务超时，已自动清理"
+                                    else:
+                                        db_task.status = "cancelled"
+                                        db_task.error_message = "任务已取消（服务端重启后自动清理）"
+                                        db_task.status_message = "任务已取消，已自动清理"
+                                    db_task.completed_at = datetime.now()
+                                    logger.warning(f"🔄 恢复超时任务: {db_task.id[:8]} (user: {user_id[:8]}, 最后更新: {db_task.updated_at})")
+
+                            await user_session.commit()
+                            logger.info(f"🧹 已恢复 {len(tasks)} 个超时任务 (用户: {user_id[:8]})")
+                    except Exception as e:
+                        logger.error(f"恢复用户 {user_id[:8]} 超时任务失败: {e}")
+
+        except Exception as e:
+            logger.error(f"恢复超时任务失败: {e}")
 
 
 # 全局单例
