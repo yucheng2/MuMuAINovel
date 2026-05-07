@@ -100,8 +100,39 @@ async def get_outlines(project_id: str, db: AsyncSession):
 
 async def expand_outline_to_chapters(outline_id: str, user_id: str, db: AsyncSession, count: int = 3):
     """展开大纲为指定数量章节"""
-    # TODO: 调用现有的展开大纲逻辑
-    pass
+    from app.api.outlines import _run_outline_expansion_background
+
+    outline_result = await db.execute(select(Outline).where(Outline.id == outline_id))
+    outline = outline_result.scalar_one_or_none()
+    if not outline:
+        return []
+
+    # 调用现有的展开逻辑
+    data = {
+        "target_chapter_count": count,
+        "auto_create_chapters": True
+    }
+
+    # 同步调用展开函数
+    await _run_outline_expansion_background(
+        task_id=f"auto_write_expand_{outline_id}",
+        user_id=user_id,
+        outline_id=outline_id,
+        data=data
+    )
+
+    # 等待章节创建完成（短暂延迟）
+    await asyncio.sleep(1)
+
+    # 获取生成的章节
+    chapters_result = await db.execute(
+        select(Chapter)
+        .where(Chapter.outline_id == outline_id)
+        .order_by(Chapter.order_index)
+    )
+    chapters = chapters_result.scalars().all()
+
+    return list(chapters)[:count]
 
 
 async def write_chapter_content(chapter_id: str, user_id: str, db: AsyncSession) -> bool:
