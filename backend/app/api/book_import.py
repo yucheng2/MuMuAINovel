@@ -5,6 +5,7 @@ import asyncio
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -205,6 +206,116 @@ async def apply_book_import_stream(
             yield await SSEResponse.send_error(str(exc), 500)
 
     return create_sse_response(_streaming_generator())
+
+
+# ============ 后台导入相关 ============
+
+class BookImportBackgroundRequest(BaseModel):
+    """后台导入请求"""
+    project_suggestion: dict
+    chapters: list
+    outlines: list = []
+    import_mode: str = "append"
+
+
+class BookImportBackgroundResponse(BaseModel):
+    """后台导入响应"""
+    task_id: str
+    message: str
+
+
+async def _run_book_import_bg(task_id: str, user_id: str, task_input: dict):
+    """后台执行书籍导入任务"""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from app.database import get_engine
+    from app.services.background_task_service import TaskProgressTracker
+    from app.services.book_import_service import BookImportApplyRequest, BookImportChapter, BookImportOutline, ProjectSuggestion
+
+    book_import_task_id = task_input.get("book_import_task_id", "")
+    task_name = "书籍导入中"
+    tracker = TaskProgressTracker(task_id, user_id, task_name)
+
+    async def send_heartbeat(msg: str = None):
+        await tracker.heartbeat(msg or "心跳中...")
+
+    try:
+        engine = await get_engine(user_id)
+        AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        async with AsyncSessionLocal() as db:
+            # 构建 payload
+            payload = BookImportApplyRequest(
+                project_suggestion=ProjectSuggestion(**task_input["project_suggestion"]),
+                chapters=[BookImportChapter(**c) for c in task_input["chapters"]],
+                outlines=[BookImportOutline(**o) for o in task_input.get("outlines", [])],
+                import_mode=task_input.get("import_mode", "append"),
+            )
+
+            async def progress_callback(message: str, progress: int, status: str = "processing"):
+                await tracker.loading(message, progress / 100.0)
+
+            # 执行导入（使用 stream 版本但不输出进度）
+            await tracker.start("书籍导入中...")
+            result = await book_import_service.apply_import_stream(
+                task_id=book_import_task_id,
+                user_id=user_id,
+                payload=payload,
+                db=db,
+                progress_callback=progress_callback,
+            )
+
+            await tracker.complete(f"导入成功！项目ID: {result.project_id}")
+
+    except Exception as e:
+        logger.error(f"书籍后台导入任务失败: {e}")
+        await tracker.error(str(e))
+        raise
+
+
+@router.post("/tasks/{task_id}/apply-background", response_model=BookImportBackgroundResponse, summary="后台导入")
+async def apply_book_import_background(
+    task_id: str,
+    payload: BookImportBackgroundRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """后台导入：创建后台任务后立即返回，不等待完成"""
+    from app.services.background_task_service import BackgroundTaskService, background_task_service
+
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    # 创建后台任务
+    task_input = {
+        "book_import_task_id": task_id,
+        "project_suggestion": payload.project_suggestion,
+        "chapters": payload.chapters,
+        "outlines": payload.outlines,
+        "import_mode": payload.import_mode,
+    }
+
+    task = await BackgroundTaskService.create_task(
+        user_id=user_id,
+        project_id=None,
+        task_type="book_import",
+        task_input=task_input,
+        db=db,
+    )
+
+    task_input["user_id"] = user_id
+    await background_task_service.spawn_background_task(
+        task.id,
+        user_id,
+        _run_book_import_bg,
+        task_input=task_input,
+        task_type="book_import",
+    )
+
+    return BookImportBackgroundResponse(
+        task_id=task.id,
+        message="后台导入任务已创建",
+    )
 
 
 @router.post("/tasks/{task_id}/retry-stream", summary="重试失败的生成步骤（SSE流式进度）")

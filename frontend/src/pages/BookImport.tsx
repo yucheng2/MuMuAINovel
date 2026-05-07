@@ -24,8 +24,9 @@ import {
   theme,
 } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { InboxOutlined, PlayCircleOutlined, ReloadOutlined, StopOutlined, WarningOutlined, RedoOutlined } from '@ant-design/icons';
+import { InboxOutlined, PlayCircleOutlined, ReloadOutlined, StopOutlined, WarningOutlined, RedoOutlined, CloudUploadOutlined } from '@ant-design/icons';
 import { bookImportApi } from '../services/api';
+import { eventBus } from '../store/eventBus';
 import type {
   BookImportApplyPayload,
   BookImportExtractMode,
@@ -136,6 +137,29 @@ export default function BookImport() {
   const [retryProgress, setRetryProgress] = useState(0);
   const [retryMessage, setRetryMessage] = useState('');
   const importedProjectId = useRef<string | null>(null);
+
+  // 重置页面状态到初始状态
+  const resetPageState = useCallback(() => {
+    setFile(null);
+    setExtractMode('tail');
+    setTailChapterCount(10);
+    setTaskId(null);
+    setTaskStatus(null);
+    setPreview(null);
+    setCreatingTask(false);
+    setLoadingPreview(false);
+    setApplying(false);
+    setApplyProgress(0);
+    setApplyMessage('');
+    setApplyError(null);
+    setIsApplyComplete(false);
+    setFailedSteps([]);
+    setRetrying(false);
+    setRetryProgress(0);
+    setRetryMessage('');
+    importedProjectId.current = null;
+    clearBookImportCache();
+  }, []);
 
   const isTaskTerminal = useMemo(() => {
     return !!taskStatus && ['completed', 'failed', 'cancelled'].includes(taskStatus.status);
@@ -475,6 +499,27 @@ export default function BookImport() {
       setApplyError('确认导入失败，无法连接到服务器');
       message.error('确认导入失败');
       setApplying(false);
+    }
+  };
+
+  const applyImportBackground = async () => {
+    if (!taskId || !preview) return;
+
+    const payload: BookImportApplyPayload = {
+      project_suggestion: preview.project_suggestion,
+      chapters: preview.chapters,
+      outlines: preview.outlines,
+      import_mode: 'append',
+    };
+
+    try {
+      await bookImportApi.applyImportBackground(taskId, payload);
+      message.success('后台导入任务已创建');
+      eventBus.emit('background-task-created');
+      resetPageState();
+    } catch (error: any) {
+      console.error('后台导入失败:', error);
+      message.error(error?.response?.data?.detail || '后台导入失败');
     }
   };
 
@@ -849,14 +894,23 @@ export default function BookImport() {
       <Card
         title="预览修正"
         extra={
-          <Button
-            type="primary"
-            loading={applying}
-            disabled={!preview}
-            onClick={applyImport}
-          >
-            确认导入
-          </Button>
+          <Space>
+            <Button
+              icon={<CloudUploadOutlined />}
+              disabled={!preview}
+              onClick={applyImportBackground}
+            >
+              后台导入
+            </Button>
+            <Button
+              type="primary"
+              loading={applying}
+              disabled={!preview}
+              onClick={applyImport}
+            >
+              确认导入
+            </Button>
+          </Space>
         }
         style={{ marginBottom: 16 }}
       >

@@ -506,6 +506,17 @@ export const bookImportApi = {
 
   cancelTask: (taskId: string) =>
     api.delete<unknown, { success: boolean; message: string }>(`/book-import/tasks/${taskId}`),
+
+  applyImportBackground: (taskId: string, payload: BookImportApplyPayload) =>
+    api.post<unknown, { task_id: string; message: string }>(
+      `/book-import/tasks/${taskId}/apply-background`,
+      {
+        project_suggestion: payload.project_suggestion,
+        chapters: payload.chapters,
+        outlines: payload.outlines || [],
+        import_mode: payload.import_mode || 'append',
+      }
+    ),
 };
 
 export const outlineApi = {
