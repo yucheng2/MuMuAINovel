@@ -175,7 +175,7 @@ app.include_router(outlines.router, prefix="/api")
 app.include_router(characters.router, prefix="/api")
 app.include_router(careers.router, prefix="/api")  # 职业管理API
 app.include_router(chapters.router, prefix="/api")
-app.include_router(writing.router, prefix="/api")  # 自动写作API
+app.include_router(writing.router)  # 自动写作API (已包含/api前缀)
 app.include_router(relationships.router, prefix="/api")
 app.include_router(organizations.router, prefix="/api")
 app.include_router(writing_styles.router, prefix="/api")
