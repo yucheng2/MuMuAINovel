@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.project import Project
 from app.models.outline import Outline
 from app.models.chapter import Chapter
-from app.models.background_task import BackgroundTask
 from app.models.memory import PlotAnalysis
 from app.services.background_task_service import TaskProgressTracker
 from app.services.plot_analyzer import PlotAnalyzer
@@ -142,8 +141,9 @@ async def expand_outline_to_chapters(outline_id: str, user_id: str, db: AsyncSes
 
 
 async def write_chapter_content(chapter_id: str, user_id: str, db: AsyncSession, tracker=None, timeout: int = 300) -> bool:
-    """写章节内容（同步等待生成完成）"""
-    from app.services.background_task_service import background_task_service
+    """写章节内容（直接在当前上下文中执行，不创建独立任务）"""
+    from app.api.settings import get_user_ai_service_from_db
+    from app.api.chapters import _run_chapter_generation_bg
     from app.database import get_engine
     from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as BgAsyncSession
 
@@ -162,95 +162,43 @@ async def write_chapter_content(chapter_id: str, user_id: str, db: AsyncSession,
         await tracker.loading("开始写作...", 0.55)
 
     try:
-        task = await background_task_service.create_task(
-            user_id=user_id,
-            project_id=chapter.project_id,
-            task_type="chapter_generate",
-            task_input={
-                "chapter_id": chapter_id,
-                "style_id": None,
-                "target_word_count": 3000,
-                "enable_mcp": False,
-                "model": None,
-                "narrative_perspective": None,
-            },
-            db=db
-        )
+        # 直接调用章节生成逻辑，不创建独立任务
+        engine = await get_engine(user_id)
+        AsyncSessionLocal = async_sessionmaker(engine, class_=BgAsyncSession, expire_on_commit=False)
 
-        async def _run_chapter_generation(task_id: str, bg_user_id: str):
-            from app.api.settings import get_user_ai_service_from_db
-            from app.api.chapters import _run_chapter_generation_bg
+        async with AsyncSessionLocal() as bg_db:
+            bg_ai_service = await get_user_ai_service_from_db(user_id, bg_db)
+            inner_tracker = TaskProgressTracker(f"unified_chapter_{chapter_id}", user_id, "章节")
 
-            engine = await get_engine(bg_user_id)
-            AsyncSessionLocal = async_sessionmaker(engine, class_=BgAsyncSession, expire_on_commit=False)
-
-            async with AsyncSessionLocal() as bg_db:
-                inner_tracker = TaskProgressTracker(task_id, bg_user_id, "章节")
-                try:
-                    await inner_tracker.start()
-                    bg_ai_service = await get_user_ai_service_from_db(bg_user_id, bg_db)
-                    await _run_chapter_generation_bg(
-                        task_input={
-                            "chapter_id": chapter_id,
-                            "style_id": None,
-                            "target_word_count": 3000,
-                            "enable_mcp": False,
-                            "model": None,
-                            "narrative_perspective": None,
-                        },
-                        db=bg_db,
-                        ai_service=bg_ai_service,
-                        tracker=inner_tracker,
-                        user_id=bg_user_id,
-                        task_id=task_id,
-                    )
-                except Exception as e:
-                    logger.error(f"后台章节生成失败: {e}", exc_info=True)
-                    await inner_tracker.error(str(e))
-
-        if tracker:
-            await tracker.loading("AI写作中...", 0.60)
-        await background_task_service.spawn_background_task(
-            task.id, user_id, _run_chapter_generation
-        )
-
-        start_time = asyncio.get_event_loop().time()
-        poll_count = 0
-        while (asyncio.get_event_loop().time() - start_time) < timeout:
-            poll_count += 1
-            if poll_count % 12 == 0:
-                elapsed = int(asyncio.get_event_loop().time() - start_time)
-                logger.info(f"等待章节 {chapter_id} 生成中... 已等待 {elapsed} 秒")
-
-            if tracker and poll_count % 4 == 0:
-                elapsed = int(asyncio.get_event_loop().time() - start_time)
-                await tracker.loading(f"写作中...（已等待 {elapsed} 秒）", 0.65)
-
-            await db.refresh(chapter)
-            if chapter.content and len(chapter.content) > 100:
-                if tracker:
-                    await tracker.loading(f"章节写作完成（{chapter.word_count}字）", 0.75)
-                logger.info(f"章节 {chapter_id} 内容已生成，字数: {chapter.word_count}")
-                return True
-
-            task_result = await db.execute(
-                select(BackgroundTask).where(BackgroundTask.id == task.id)
+            await _run_chapter_generation_bg(
+                task_input={
+                    "chapter_id": chapter_id,
+                    "style_id": None,
+                    "target_word_count": 3000,
+                    "enable_mcp": False,
+                    "model": None,
+                    "narrative_perspective": None,
+                },
+                db=bg_db,
+                ai_service=bg_ai_service,
+                tracker=inner_tracker,
+                user_id=user_id,
+                task_id=f"unified_chapter_{chapter_id}",
             )
-            db_task = task_result.scalar_one_or_none()
-            if db_task and db_task.status == "failed":
-                logger.warning(f"章节 {chapter_id} 生成失败: {db_task.status_message}")
-                if tracker:
-                    await tracker.error(f"章节写作失败: {db_task.status_message}")
-                return False
 
-            await asyncio.sleep(5)
+        # 刷新章节数据
+        await db.refresh(chapter)
+        if chapter.content and len(chapter.content) > 100:
+            if tracker:
+                await tracker.loading(f"章节写作完成（{chapter.word_count}字）", 0.75)
+            logger.info(f"章节 {chapter_id} 内容已生成，字数: {chapter.word_count}")
+            return True
+        else:
+            logger.warning(f"章节 {chapter_id} 生成后仍无内容")
+            return False
 
-        logger.warning(f"章节 {chapter_id} 生成超时（{timeout}秒）")
-        if tracker:
-            await tracker.error(f"章节写作超时（{timeout}秒）")
-        return False
     except Exception as e:
-        logger.warning(f"章节 {chapter_id} 写作失败: {e}")
+        logger.warning(f"章节 {chapter_id} 写作失败: {e}", exc_info=True)
         if tracker:
             await tracker.error(f"章节写作失败: {e}")
         return False
