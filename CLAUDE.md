@@ -122,3 +122,7 @@ AI 服务采用客户端-提供者模式：
 - `backend/app/config.py` - 应用配置（Pydantic Settings）
 - `backend/app/services/prompt_service.py` - Prompt 模板服务
 - `frontend/src/services/api.ts` - 前端 API 调用封装
+
+## 文档
+
+- [AI 创作流程详解](./docs/guide/ai-workflow.md) - 大纲生成、章节展开、章节分析的技术流程
