@@ -89,6 +89,9 @@ backend/storage/
 temp/
 tmp/
 
+# Tools
+.understand-anything/
+
 # Coverage
 .coverage
 htmlcov/
