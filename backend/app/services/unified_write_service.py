@@ -91,7 +91,11 @@ async def generate_one_outline(project_id: str, user_id: str, db: AsyncSession, 
 
 
 async def expand_outline_to_chapters(outline_id: str, user_id: str, db: AsyncSession, count: int = 1, tracker=None):
-    """展开大纲为指定数量章节"""
+    """展开大纲为指定数量章节
+
+    对于 one-to-one 模式：每个大纲直接创建一个章节，chapter_number = outline.order_index
+    对于 one-to-many 模式：调用 _run_outline_expansion_background 展开
+    """
     from app.api.outlines import _run_outline_expansion_background
 
     outline_result = await db.execute(select(Outline).where(Outline.id == outline_id))
@@ -99,9 +103,15 @@ async def expand_outline_to_chapters(outline_id: str, user_id: str, db: AsyncSes
     if not outline:
         return []
 
+    # 获取项目信息，判断 outline_mode
+    project_result = await db.execute(select(Project).where(Project.id == outline.project_id))
+    project = project_result.scalar_one_or_none()
+    outline_mode = project.outline_mode if project else 'one-to-many'
+
     if tracker:
         await tracker.loading("规划章节结构...", 0.40)
 
+    # 检查是否已有章节（按 outline_id 检查，避免重复创建）
     existing_chapters_result = await db.execute(
         select(Chapter)
         .where(Chapter.outline_id == outline_id)
@@ -115,6 +125,27 @@ async def expand_outline_to_chapters(outline_id: str, user_id: str, db: AsyncSes
             await tracker.loading("章节结构规划完成（复用已有章节）", 0.50)
         return existing_chapters[:count]
 
+    # one-to-one 模式：直接创建章节，chapter_number = outline.order_index
+    if outline_mode == 'one-to-one':
+        chapter = Chapter(
+            project_id=outline.project_id,
+            outline_id=outline_id,
+            chapter_number=outline.order_index,
+            sub_index=1,
+            title=outline.title,
+            summary=outline.content or "",
+            status="draft",
+            content=""
+        )
+        db.add(chapter)
+        await db.commit()
+        await db.refresh(chapter)
+        logger.info(f"one-to-one 模式：为大纲 {outline_id} 创建章节 chapter_number={outline.order_index}")
+        if tracker:
+            await tracker.loading("章节结构规划完成", 0.50)
+        return [chapter]
+
+    # one-to-many 模式：调用展开逻辑
     data = {
         "target_chapter_count": count,
         "auto_create_chapters": True
