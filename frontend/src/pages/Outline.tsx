@@ -1,9 +1,9 @@
 ﻿import { useState, useEffect, useMemo } from 'react';
 import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination, theme } from 'antd';
-import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined, RocketOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
-import { getProjectTasks, type TaskStatus, createAutoWriteTask } from '../services/backgroundTaskService';
+import { getProjectTasks, type TaskStatus } from '../services/backgroundTaskService';
 import { useOutlineSync } from '../store/hooks';
 import { generateOutlineBackground } from '../services/backgroundTaskService';
 import { outlineApi, chapterApi, projectApi, characterApi } from '../services/api';
@@ -108,7 +108,6 @@ const { TextArea } = Input;
 export default function Outline() {
   const { currentProject, outlines, setCurrentProject } = useStore();
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isAutoWriting, setIsAutoWriting] = useState(false);
   const [editForm] = Form.useForm();
   const [generateForm] = Form.useForm();
   const [expansionForm] = Form.useForm();
@@ -585,47 +584,6 @@ export default function Outline() {
       message.error('AI生成失败');
       setIsGenerating(false);
     }
-  };
-
-  // AI自动写作功能
-  const handleAutoWrite = async () => {
-    if (!currentProject?.id) {
-      message.warning('请先选择一个项目');
-      return;
-    }
-
-    Modal.confirm({
-      title: '启动AI自动写作',
-      content: (
-        <div>
-          <p>目标字数：{currentProject.target_words || 30000} 字</p>
-          <p>将自动循环执行：生成大纲→展开→写章节→分析</p>
-        </div>
-      ),
-      onOk: async () => {
-        setIsAutoWriting(true);
-        try {
-          await createAutoWriteTask(
-            currentProject.id,
-            (progress) => {
-              // 进度由 FloatingTaskPanel 浮窗显示，不需要 toast 提示
-            },
-            (result) => {
-              setIsAutoWriting(false);
-              message.success('自动写作完成！');
-              refreshOutlines();
-            },
-            (error) => {
-              setIsAutoWriting(false);
-              message.error('自动写作失败: ' + error);
-            }
-          );
-        } catch (error) {
-          setIsAutoWriting(false);
-          message.error('启动失败');
-        }
-      }
-    });
   };
 
   const showGenerateModal = async () => {
@@ -1542,14 +1500,6 @@ export default function Outline() {
               block={isMobile}
             >
               {isMobile ? 'AI生成/续写' : 'AI生成/续写大纲'}
-            </Button>
-            <Button
-              icon={<RocketOutlined />}
-              onClick={handleAutoWrite}
-              loading={isAutoWriting}
-              block={isMobile}
-            >
-              {isMobile ? 'AI自动写作' : 'AI自动写作'}
             </Button>
             {outlines.length > 0 && currentProject?.outline_mode === 'one-to-many' && (
               <Button
