@@ -133,6 +133,20 @@ async def expand_outline_to_chapters(outline_id: str, user_id: str, db: AsyncSes
     if tracker:
         await tracker.loading("规划章节结构...", 0.55)
 
+    # 检查是否已有章节（避免重复创建）
+    existing_chapters_result = await db.execute(
+        select(Chapter)
+        .where(Chapter.outline_id == outline_id)
+        .order_by(Chapter.chapter_number)
+    )
+    existing_chapters = list(existing_chapters_result.scalars().all())
+
+    if existing_chapters:
+        logger.info(f"大纲 {outline_id} 已有 {len(existing_chapters)} 个章节，跳过展开")
+        if tracker:
+            await tracker.loading("章节结构规划完成（复用已有章节）", 0.65)
+        return existing_chapters[:count]
+
     # 调用现有的展开逻辑
     data = {
         "target_chapter_count": count,
@@ -171,6 +185,13 @@ async def write_chapter_content(chapter_id: str, user_id: str, db: AsyncSession,
     chapter = chapter_result.scalar_one_or_none()
     if not chapter:
         return False
+
+    # 如果章节已有内容，跳过生成
+    if chapter.content and len(chapter.content) > 100:
+        logger.info(f"章节 {chapter_id} 已有内容（{chapter.word_count}字），跳过生成")
+        if tracker:
+            await tracker.loading(f"章节写作完成（{chapter.word_count}字）", 0.85)
+        return True
 
     if tracker:
         await tracker.loading("开始写作...", 0.66)
