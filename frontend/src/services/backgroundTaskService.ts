@@ -302,20 +302,27 @@ export async function createAutoWriteTask(
 
   const { task_id } = await response.json();
 
-  // 轮询任务状态
+  // 轮询任务状态（使用通用的 tasks API）
   const intervalId = setInterval(async () => {
     try {
-      const statusResponse = await fetch(`/api/writing/auto-write/${task_id}/progress`);
-      const status = await statusResponse.json();
+      const statusResponse = await fetch(`/api/tasks/${task_id}`);
+      if (!statusResponse.ok) {
+        console.error('轮询任务状态失败:', statusResponse.status);
+        return;
+      }
+      const task = await statusResponse.json();
 
-      if (status.status === 'completed') {
+      if (task.status === 'completed') {
         clearInterval(intervalId);
-        onComplete(status);
-      } else if (status.status === 'failed') {
+        onComplete(task);
+      } else if (task.status === 'failed') {
         clearInterval(intervalId);
-        onError(status.error || '任务失败', status);
+        onError(task.error_message || '任务失败', task);
+      } else if (task.status === 'cancelled') {
+        clearInterval(intervalId);
+        onError('任务已取消', task);
       } else {
-        onProgress(status);
+        onProgress(task);
       }
     } catch (err) {
       console.error('轮询出错:', err);

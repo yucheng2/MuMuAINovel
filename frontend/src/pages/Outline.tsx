@@ -608,10 +608,7 @@ export default function Outline() {
           await createAutoWriteTask(
             currentProject.id,
             (progress) => {
-              // 更新进度显示
-              if (progress.message) {
-                message.info(progress.message);
-              }
+              // 进度由 FloatingTaskPanel 浮窗显示，不需要 toast 提示
             },
             (result) => {
               setIsAutoWriting(false);
