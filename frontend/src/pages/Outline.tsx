@@ -1,9 +1,9 @@
 ﻿import { useState, useEffect, useMemo } from 'react';
 import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination, theme } from 'antd';
-import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined, RocketOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
-import { getProjectTasks, type TaskStatus } from '../services/backgroundTaskService';
+import { getProjectTasks, type TaskStatus, createUnifiedWriteTask } from '../services/backgroundTaskService';
 import { useOutlineSync } from '../store/hooks';
 import { generateOutlineBackground } from '../services/backgroundTaskService';
 import { outlineApi, chapterApi, projectApi, characterApi } from '../services/api';
@@ -108,6 +108,7 @@ const { TextArea } = Input;
 export default function Outline() {
   const { currentProject, outlines, setCurrentProject } = useStore();
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isUnifiedWriting, setIsUnifiedWriting] = useState(false);
   const [editForm] = Form.useForm();
   const [generateForm] = Form.useForm();
   const [expansionForm] = Form.useForm();
@@ -783,6 +784,70 @@ export default function Outline() {
         const values = await generateForm.validateFields();
         await handleGenerate(values);
       },
+    });
+  };
+
+  // 一键写作弹窗
+  const showUnifiedWriteModal = () => {
+    if (!currentProject?.id) {
+      message.warning('请先选择一个项目');
+      return;
+    }
+
+    modalApi.confirm({
+      title: 'AI一键写作',
+      width: 500,
+      centered: true,
+      content: (
+        <Form
+          layout="vertical"
+          style={{ marginTop: 16 }}
+          initialValues={{
+            chapters_per_outline: 1,
+          }}
+        >
+          <Form.Item
+            label="生成章节数量"
+            name="chapters_per_outline"
+            tooltip="每个大纲生成的章节数量，默认1章"
+          >
+            <InputNumber
+              min={1}
+              max={10}
+              placeholder="默认1章"
+            />
+          </Form.Item>
+          <div style={{ color: '#888', fontSize: 13, marginTop: 8 }}>
+            流程：生成大纲 → 展开章节 → 写内容 → 分析
+          </div>
+        </Form>
+      ),
+      okText: '开始写作',
+      cancelText: '取消',
+      onOk: async () => {
+        setIsUnifiedWriting(true);
+        try {
+          await createUnifiedWriteTask(
+            currentProject.id,
+            1,
+            (_task) => {
+              // 进度由 FloatingTaskPanel 浮窗显示
+            },
+            (_result) => {
+              setIsUnifiedWriting(false);
+              message.success('一键写作完成！');
+              refreshOutlines();
+            },
+            (error) => {
+              setIsUnifiedWriting(false);
+              message.error('一键写作失败: ' + error);
+            }
+          );
+        } catch (error) {
+          setIsUnifiedWriting(false);
+          message.error('启动失败');
+        }
+      }
     });
   };
 
@@ -1500,6 +1565,15 @@ export default function Outline() {
               block={isMobile}
             >
               {isMobile ? 'AI生成/续写' : 'AI生成/续写大纲'}
+            </Button>
+            <Button
+              icon={<RocketOutlined />}
+              onClick={showUnifiedWriteModal}
+              loading={isUnifiedWriting}
+              block={isMobile}
+              style={{ background: '#f6ffed', borderColor: '#52c41a' }}
+            >
+              {isMobile ? '一键写作' : 'AI一键写作'}
             </Button>
             {outlines.length > 0 && currentProject?.outline_mode === 'one-to-many' && (
               <Button

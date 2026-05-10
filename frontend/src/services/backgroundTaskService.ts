@@ -280,3 +280,62 @@ export async function generateChapterBackground(
     cancelTask(task_id).catch(() => {});
   };
 }
+
+/**
+ * 创建一键写作任务并轮询进度
+ */
+export async function createUnifiedWriteTask(
+  projectId: string,
+  chaptersPerOutline: number = 1,
+  onProgress: TaskProgressCallback,
+  onComplete: TaskCompleteCallback,
+  onError: TaskErrorCallback
+): Promise<() => void> {
+  const response = await fetch('/api/writing/unified-write', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      project_id: projectId,
+      chapters_per_outline: chaptersPerOutline,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error('创建一键写作任务失败');
+  }
+
+  const { task_id } = await response.json();
+
+  // 轮询任务状态
+  const intervalId = setInterval(async () => {
+    try {
+      const statusResponse = await fetch(`/api/tasks/${task_id}`);
+      if (!statusResponse.ok) {
+        console.error('轮询任务状态失败:', statusResponse.status);
+        return;
+      }
+      const task = await statusResponse.json();
+
+      if (task.status === 'completed') {
+        clearInterval(intervalId);
+        onComplete(task);
+      } else if (task.status === 'failed') {
+        clearInterval(intervalId);
+        onError(task.error_message || '任务失败', task);
+      } else if (task.status === 'cancelled') {
+        clearInterval(intervalId);
+        onError('任务已取消', task);
+      } else {
+        onProgress(task);
+      }
+    } catch (err) {
+      console.error('轮询出错:', err);
+    }
+  }, 2000);
+
+  // 返回取消函数
+  return () => {
+    clearInterval(intervalId);
+    fetch(`/api/writing/unified-write/${task_id}/stop`, { method: 'POST' }).catch(console.error);
+  };
+}

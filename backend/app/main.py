@@ -156,7 +156,7 @@ async def db_session_stats(request: Request):
 from app.api import (
     projects, outlines, characters, chapters,
     wizard_stream, relationships, organizations,
-    auth, users, settings, writing_styles, memories,
+    auth, users, settings, writing, writing_styles, memories,
     mcp_plugins, admin, inspiration, prompt_templates,
     changelog, careers, foreshadows, prompt_workshop, book_import,
     project_covers, tasks
@@ -175,6 +175,7 @@ app.include_router(outlines.router, prefix="/api")
 app.include_router(characters.router, prefix="/api")
 app.include_router(careers.router, prefix="/api")  # 职业管理API
 app.include_router(chapters.router, prefix="/api")
+app.include_router(writing.router)  # 一键写作API (已包含/api前缀)
 app.include_router(relationships.router, prefix="/api")
 app.include_router(organizations.router, prefix="/api")
 app.include_router(writing_styles.router, prefix="/api")
