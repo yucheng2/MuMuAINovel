@@ -4,10 +4,13 @@ from sqlalchemy import select
 from app.models.background_task import BackgroundTask
 from app.models.project import Project
 from app.services.background_task_service import background_task_service
-from app.services.auto_write_service import auto_write_loop, get_project_word_count, get_project
+from app.services.auto_write_service import auto_write_loop
 from app.database import get_db
+from app.logger import get_logger
 from pydantic import BaseModel
 from typing import Optional
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/writing", tags=["writing"])
 
@@ -17,10 +20,20 @@ class AutoWriteRequest(BaseModel):
 
 async def _run_auto_write_bg(task_id: str, user_id: str, project_id: str):
     """后台运行自动写作"""
-    from app.database import AsyncSessionLocal
+    import traceback
+    from app.database import get_engine
+    from sqlalchemy.ext.asyncio import async_sessionmaker
 
-    async with AsyncSessionLocal() as db:
-        await auto_write_loop(task_id, user_id, project_id, db)
+    logger.info(f"[{task_id}] _run_auto_write_bg 开始, user={user_id[:8]}, project={project_id}")
+    try:
+        engine = await get_engine(user_id)
+        AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with AsyncSessionLocal() as db:
+            logger.info(f"[{task_id}] 成功创建 session，进入 auto_write_loop")
+            await auto_write_loop(task_id, user_id, project_id, db)
+            logger.info(f"[{task_id}] auto_write_loop 正常返回")
+    except Exception as e:
+        logger.error(f"[{task_id}] _run_auto_write_bg 异常: {e}\n{traceback.format_exc()}")
 
 
 @router.post("/auto-write")
@@ -88,39 +101,3 @@ async def stop_auto_write_task(
     await db.commit()
 
     return {"status": "stopped"}
-
-
-@router.get("/auto-write/{task_id}/progress")
-async def get_auto_write_progress(
-    task_id: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db)
-):
-    """获取自动写作进度"""
-    user_id = getattr(request.state, 'user_id', None)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="未登录")
-
-    result = await db.execute(
-        select(BackgroundTask).where(
-            BackgroundTask.id == task_id,
-            BackgroundTask.user_id == user_id
-        )
-    )
-    task = result.scalar_one_or_none()
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
-
-    current_words = await get_project_word_count(task.project_id, db)
-    project = await get_project(task.project_id, db)
-    target_words = project.target_words if project else 30000
-
-    return {
-        "task_id": task.id,
-        "status": task.status,
-        "progress": task.progress or 0,
-        "current_words": current_words,
-        "target_words": target_words,
-        "message": task.status_message,
-        "details": task.progress_details or {}
-    }

@@ -31,7 +31,6 @@ def test_writing_api_imports():
             router,
             create_auto_write_task,
             stop_auto_write_task,
-            get_auto_write_progress,
         )
         print("✅ test_writing_api_imports PASSED")
         return True
@@ -75,13 +74,12 @@ def test_auto_write_loop_function_exists():
 
 def test_api_endpoints_have_correct_decorators():
     """测试 API 端点有正确的装饰器"""
-    from app.api.writing import create_auto_write_task, stop_auto_write_task, get_auto_write_progress
+    from app.api.writing import create_auto_write_task, stop_auto_write_task
     import inspect
 
     # 检查函数是否为协程
     assert inspect.iscoroutinefunction(create_auto_write_task), "create_auto_write_task 应该是 async"
     assert inspect.iscoroutinefunction(stop_auto_write_task), "stop_auto_write_task 应该是 async"
-    assert inspect.iscoroutinefunction(get_auto_write_progress), "get_auto_write_progress 应该是 async"
 
     print("✅ test_api_endpoints_have_correct_decorators PASSED")
     return True
