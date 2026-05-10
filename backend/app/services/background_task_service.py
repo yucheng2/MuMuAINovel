@@ -38,12 +38,16 @@ class TaskProgressTracker:
                         setattr(task, key, value)
                     task.updated_at = datetime.now()
                     await session.commit()
+                    logger.info(f"[{self.task_id}] tracker 更新成功: {kwargs.get('status_message', kwargs.get('status', '?'))}")
+                else:
+                    logger.warning(f"[{self.task_id}] tracker 更新失败: 任务不存在")
         except Exception as e:
             logger.error(f"❌ 更新任务进度失败: {e}")
 
     async def start(self, message: str = None):
         self.current_progress = 0
         msg = message or f"开始生成{self.task_name}..."
+        logger.info(f"[{self.task_id}] tracker.start: {msg}")
         await self._update_task(
             status="running", progress=0, status_message=msg,
             started_at=datetime.now(),
@@ -153,12 +157,18 @@ class TaskProgressTracker:
             )
             async with AsyncSessionLocal() as session:
                 result = await session.execute(
-                    select(BackgroundTask.cancel_requested)
+                    select(BackgroundTask.cancel_requested, BackgroundTask.status, BackgroundTask.status_message)
                     .where(BackgroundTask.id == self.task_id)
                 )
-                cancelled = result.scalar_one_or_none()
-                return bool(cancelled)
-        except Exception:
+                row = result.one_or_none()
+                if row is None:
+                    logger.warning(f"[{self.task_id}] check_cancelled: 任务不存在!")
+                    return False
+                cancel_requested, status, status_msg = row
+                logger.info(f"[{self.task_id}] check_cancelled: cancel_requested={cancel_requested}, status={status}, msg={status_msg}")
+                return bool(cancel_requested)
+        except Exception as e:
+            logger.error(f"[{self.task_id}] check_cancelled 异常: {e}")
             return False
 
 
@@ -185,19 +195,55 @@ class BackgroundTaskService:
 
     async def _start_user_worker(self, user_id: str):
         """启动指定用户的工作协程"""
+        # 如果队列不存在（服务器重启后），说明 worker 状态是 stale 的，重置它
+        if user_id not in self._user_queues:
+            self._user_workers.pop(user_id, None)
+
         if self._user_workers.get(user_id, False):
+            logger.info(f"📋 用户 {user_id[:8]} 的 worker 已在运行中，跳过")
             return
         self._user_workers[user_id] = True
-        asyncio.create_task(self._user_worker_loop(user_id))
-        logger.info(f"📋 用户 {user_id[:8]} 的任务队列工作协程已启动")
+        try:
+            # 使用 ensure_future 确保任务被真正调度
+            handle = asyncio.ensure_future(self._user_worker_loop(user_id))
+            # 添加回调用于日志记录
+            def done_callback(f):
+                if f.cancelled():
+                    logger.warning(f"⚠️ 用户 {user_id[:8]} 的 worker 任务被取消")
+                elif f.exception():
+                    logger.error(f"❌ 用户 {user_id[:8]} 的 worker 异常: {f.exception()}", exc_info=f.exception())
+                else:
+                    logger.info(f"📋 用户 {user_id[:8]} 的 worker 任务正常结束")
+            handle.add_done_callback(done_callback)
+            logger.info(f"📋 用户 {user_id[:8]} 的任务队列工作协程已启动 (task_id={id(handle)})")
+            # 让出控制权，确保 worker 有机会开始执行
+            await asyncio.sleep(0)
+        except Exception as e:
+            logger.error(f"❌ 启动用户 {user_id[:8]} 的工作协程失败: {e}", exc_info=True)
+            self._user_workers.pop(user_id, None)
 
     async def _user_worker_loop(self, user_id: str):
         """从指定用户的队列中逐个取出任务并执行"""
-        queue = self._user_queues[user_id]
+        logger.info(f"🔧 [worker {user_id[:8]}] 工作协程开始执行，队列id: {id(self._user_queues.get(user_id))}")
         try:
             while True:
                 try:
-                    task_item = await queue.get()
+                    # 每次循环都从 _user_queues 获取最新引用，防止队列被重建后引用失效
+                    queue = self._user_queues.get(user_id)
+                    if queue is None:
+                        # 队列不存在（可能是服务器重启后首次调用），等待队列创建
+                        logger.warning(f"⚠️ [worker {user_id[:8]}] 队列不存在，等待创建中...")
+                        await asyncio.sleep(0.5)
+                        continue
+
+                    logger.info(f"🔧 [worker {user_id[:8]}] 等待队列任务... (队列长度: {queue.qsize()}, 队列id: {id(queue)})")
+                    # 使用 get_nowait 配合循环来实现超时，避免永久阻塞
+                    try:
+                        task_item = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    except asyncio.TimeoutError:
+                        logger.warning(f"🔧 [worker {user_id[:8]}] 队列等待超时（30秒无任务），继续等待...")
+                        continue
+                    logger.info(f"🔧 [worker {user_id[:8]}] 取出任务: {task_item['task_id'][:8]}，队列剩余: {queue.qsize()}")
                     task_id = task_item["task_id"]
                     task_func = task_item["task_func"]
                     args = task_item["args"]
@@ -232,8 +278,28 @@ class BackgroundTaskService:
                         queue.task_done()
                         logger.info(f"✅ [用户{user_id[:8]}] 队列任务完成: {task_id[:8]} (队列剩余: {queue.qsize()})")
 
+                        # 更新队列中下一个等待任务的状态
+                        remaining = queue.qsize()
+                        tasks_ahead = max(remaining - 1, 0)
+                        if remaining > 0:
+                            try:
+                                # 尝试从队列中窥探下一个任务（不删除）
+                                # asyncio.Queue 不支持 peek，我们通过短暂的 timeout 来检查
+                                # 如果队列非空，说明有任务在等待
+                                engine = await get_engine(user_id)
+                                AsyncSessionLocal = async_sessionmaker(
+                                    engine, class_=AsyncSession, expire_on_commit=False
+                                )
+                            except Exception:
+                                pass
+
+                except asyncio.CancelledError:
+                    # 任务被取消时优雅退出
+                    logger.info(f"📋 [用户{user_id[:8]}] 队列工作协程被取消")
+                    break
                 except Exception as e:
                     logger.error(f"❌ [用户{user_id[:8]}] 队列工作循环异常: {e}", exc_info=True)
+                    await asyncio.sleep(1)  # 避免疯狂重试
         finally:
             # 工作协程退出时清理标记
             self._user_workers.pop(user_id, None)
@@ -260,7 +326,7 @@ class BackgroundTaskService:
         db.add(task)
         await db.commit()
         await db.refresh(task)
-        logger.info(f"📋 创建后台任务: {task.id[:8]} type={task_type} project={project_id[:8] if project_id else 'None'}")
+        logger.info(f"📋 创建后台任务: {task.id[:8]} type={task_type} cancel_requested={task.cancel_requested} project={project_id[:8] if project_id else 'None'}")
         return task
 
     @staticmethod
@@ -370,9 +436,11 @@ class BackgroundTaskService:
             "kwargs": kwargs,
         })
         queue_size = queue.qsize()
-        logger.info(f"📥 任务已加入用户 {user_id[:8]} 的队列: {task_id[:8]} (当前队列长度: {queue_size})")
+        logger.info(f"📥 任务已加入用户 {user_id[:8]} 的队列: {task_id[:8]} (当前队列长度: {queue_size}, 队列id: {id(queue)})")
 
         # 更新任务状态，显示排队位置
+        # queue_size 包含了当前任务，所以 tasks_ahead = queue_size - 1
+        tasks_ahead = max(queue_size - 1, 0)
         try:
             engine = await get_engine(user_id)
             AsyncSessionLocal = async_sessionmaker(
@@ -384,11 +452,11 @@ class BackgroundTaskService:
                 )
                 task = result.scalar_one_or_none()
                 if task and task.status == "pending":
-                    if queue_size > 0:
-                        task.status_message = f"排队中，前方还有 {queue_size} 个任务等待..."
+                    if tasks_ahead > 0:
+                        task.status_message = f"排队中，前方还有 {tasks_ahead} 个任务等待..."
                     else:
                         task.status_message = "即将开始执行..."
-                    task.progress_details = {"stage": "queued", "queue_size": queue_size}
+                    task.progress_details = {"stage": "queued", "queue_size": tasks_ahead}
                     task.updated_at = datetime.now()
                     await session.commit()
         except Exception as e:
