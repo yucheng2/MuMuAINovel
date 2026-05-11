@@ -399,30 +399,40 @@ async def unified_write_loop(
             return
 
         # 步骤1: 生成大纲 (0-35%)
-        logger.info(f"[{task_id}] 步骤1: 生成大纲")
-        outline = await generate_one_outline(project_id, user_id, db, tracker=tracker)
-        if not outline:
-            await tracker.error("生成大纲失败")
-            return
-        logger.info(f"[{task_id}] 大纲生成成功: {outline.id}, {outline.title}")
+        # 注意：one-to-one 模式下，每个大纲对应一个章节，需要生成 chapters_per_outline 个大纲
+        logger.info(f"[{task_id}] 步骤1: 生成 {chapters_per_outline} 个大纲")
+        all_chapters = []
+        for i in range(chapters_per_outline):
+            outline = await generate_one_outline(project_id, user_id, db, tracker=tracker)
+            if not outline:
+                logger.warning(f"[{task_id}] 第 {i+1} 个大纲生成失败，跳过")
+                continue
+            logger.info(f"[{task_id}] 大纲 {i+1}/{chapters_per_outline} 生成成功: {outline.id}, {outline.title}")
 
-        # 检查是否被取消
-        is_cancelled = await tracker.check_cancelled()
-        if is_cancelled:
-            logger.info(f"一键写作任务 {task_id} 被用户取消")
+            # 检查是否被取消
+            is_cancelled = await tracker.check_cancelled()
+            if is_cancelled:
+                logger.info(f"一键写作任务 {task_id} 被用户取消")
+                return
+
+            # 步骤2: 展开为章节 (35-50%)
+            logger.info(f"[{task_id}] 步骤2: 展开大纲 {outline.id}")
+            chapters = await expand_outline_to_chapters(outline.id, user_id, db, count=1, tracker=tracker)
+            if not chapters:
+                logger.warning(f"[{task_id}] 大纲 {outline.id} 展开章节失败，跳过")
+                continue
+            all_chapters.extend(chapters)
+            logger.info(f"[{task_id}] 章节展开成功: {[c.id for c in chapters]}")
+
+        if not all_chapters:
+            await tracker.error("所有大纲生成和展开均失败")
             return
 
-        # 步骤2: 展开为章节 (35-50%)
-        logger.info(f"[{task_id}] 步骤2: 展开大纲")
-        chapters = await expand_outline_to_chapters(outline.id, user_id, db, count=chapters_per_outline, tracker=tracker)
-        if not chapters:
-            await tracker.error("展开大纲失败")
-            return
-        logger.info(f"[{task_id}] 章节展开成功: {[c.id for c in chapters]}")
+        logger.info(f"[{task_id}] 共生成 {len(all_chapters)} 个章节")
 
         # 步骤3-4: 写章节+分析
-        for i, chapter in enumerate(chapters):
-            chapter_progress = 0.50 + (i / len(chapters)) * 0.25
+        for i, chapter in enumerate(all_chapters):
+            chapter_progress = 0.50 + (i / len(all_chapters)) * 0.25
             logger.info(f"[{task_id}] 步骤3-{i+1}: 写章节 {chapter.id}")
 
             # 检查是否被取消

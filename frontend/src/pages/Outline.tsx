@@ -115,6 +115,7 @@ export default function Outline() {
   const [modalApi, contextHolder] = Modal.useModal();
   const [batchExpansionForm] = Form.useForm();
   const [manualCreateForm] = Form.useForm();
+  const [unifiedWriteForm] = Form.useForm();
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [isExpanding, setIsExpanding] = useState(false);
   const [projectCharacters, setProjectCharacters] = useState<Array<{ label: string; value: string }>>([]);
@@ -800,6 +801,7 @@ export default function Outline() {
       centered: true,
       content: (
         <Form
+          form={unifiedWriteForm}
           layout="vertical"
           style={{ marginTop: 16 }}
           initialValues={{
@@ -817,7 +819,7 @@ export default function Outline() {
               placeholder="默认1章"
             />
           </Form.Item>
-          <div style={{ color: '#888', fontSize: 13, marginTop: 8 }}>
+          <div style={{ color: token.colorTextTertiary, fontSize: 13, marginTop: 8 }}>
             流程：生成大纲 → 展开章节 → 写内容 → 分析
           </div>
         </Form>
@@ -827,9 +829,13 @@ export default function Outline() {
       onOk: async () => {
         setIsUnifiedWriting(true);
         try {
+          // 从表单获取参数
+          const values = await unifiedWriteForm.validateFields();
+          const chaptersPerOutline = values?.chapters_per_outline || 1;
+
           await createUnifiedWriteTask(
             currentProject.id,
-            1,
+            chaptersPerOutline,
             (_task) => {
               // 进度由 FloatingTaskPanel 浮窗显示
             },
@@ -1571,7 +1577,11 @@ export default function Outline() {
               onClick={showUnifiedWriteModal}
               loading={isUnifiedWriting}
               block={isMobile}
-              style={{ background: '#f6ffed', borderColor: '#52c41a' }}
+              style={{
+                background: token.colorSuccessBg,
+                borderColor: token.colorSuccessBorder,
+                color: token.colorSuccess,
+              }}
             >
               {isMobile ? '一键写作' : 'AI一键写作'}
             </Button>

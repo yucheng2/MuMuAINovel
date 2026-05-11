@@ -80,7 +80,7 @@ async def create_outline(
             summary=db_outline.content,
             chapter_number=db_outline.order_index,
             sub_index=1,
-            outline_id=None,  # one-to-one模式不关联outline_id
+            outline_id=db_outline.id,  # one-to-one模式也要关联outline_id
             status='pending',
             content=""
         )
@@ -850,9 +850,32 @@ def _parse_ai_response(ai_response: str, raise_on_error: bool = False) -> list:
         from app.services.ai_service import AIService
         ai_service_temp = AIService()
         cleaned_text = ai_service_temp._clean_json_response(ai_response)
-        
+
+        # 如果清洗后内容为空（可能是纯思考内容），尝试直接提取JSON
+        if not cleaned_text.strip():
+            logger.warning("⚠️ AI响应清洗后为空，可能是纯思考内容，尝试直接提取JSON")
+            # 尝试直接从原始文本中提取JSON数组
+            import re
+            json_match = re.search(r'\[[\s\S]*\]', ai_response)
+            if json_match:
+                cleaned_text = json_match.group(0)
+                logger.info(f"从原始文本中提取到JSON，长度: {len(cleaned_text)}")
+
+        # 再次检查清洗后是否为空
+        if not cleaned_text.strip():
+            error_msg = "AI响应清洗后为空，无法解析"
+            logger.error(f"❌ {error_msg}")
+            if raise_on_error:
+                raise JSONParseError(error_msg, ai_response)
+            # 返回包含原始内容的章节，而不是空列表
+            return [{
+                "title": "AI生成的大纲",
+                "content": ai_response[:1000],
+                "summary": ai_response[:1000]
+            }]
+
         outline_data = loads_json(cleaned_text)
-        
+
         # 确保是列表格式
         if not isinstance(outline_data, list):
             # 如果是对象，尝试提取chapters字段
@@ -860,35 +883,36 @@ def _parse_ai_response(ai_response: str, raise_on_error: bool = False) -> list:
                 outline_data = outline_data.get("chapters", [outline_data])
             else:
                 outline_data = [outline_data]
-        
+
         # 验证解析结果是否有效（至少有一个有效章节）
         valid_chapters = [
             ch for ch in outline_data
             if isinstance(ch, dict) and (ch.get("title") or ch.get("summary") or ch.get("content"))
         ]
-        
+
         if not valid_chapters:
             error_msg = "解析结果无效：未找到有效的章节数据"
             logger.error(f"❌ {error_msg}")
             if raise_on_error:
                 raise JSONParseError(error_msg, ai_response)
+            # 返回包含原始内容的章节
             return [{
                 "title": "AI生成的大纲",
                 "content": ai_response[:1000],
                 "summary": ai_response[:1000]
             }]
-        
+
         logger.info(f"✅ 成功解析 {len(valid_chapters)} 个章节数据")
         return valid_chapters
-        
+
     except json.JSONDecodeError as e:
         error_msg = f"JSON解析失败: {e}"
         logger.error(f"❌ AI响应解析失败: {e}")
-        
+
         if raise_on_error:
             raise JSONParseError(error_msg, ai_response)
-        
-        # 返回一个包含原始内容的章节
+
+        # 返回包含原始内容的章节
         return [{
             "title": "AI生成的大纲",
             "content": ai_response[:1000],
@@ -900,14 +924,13 @@ def _parse_ai_response(ai_response: str, raise_on_error: bool = False) -> list:
     except Exception as e:
         error_msg = f"解析异常: {str(e)}"
         logger.error(f"❌ {error_msg}")
-        
         if raise_on_error:
             raise JSONParseError(error_msg, ai_response)
-        
+        # 返回包含原始内容的章节
         return [{
-            "title": "解析异常的大纲",
-            "content": "系统错误",
-            "summary": "系统错误"
+            "title": "AI生成的大纲",
+            "content": ai_response[:1000],
+            "summary": ai_response[:1000]
         }]
 
 
@@ -971,12 +994,12 @@ async def _save_outlines(
                 summary=chapter_summary,
                 chapter_number=outline.order_index,
                 sub_index=1,
-                outline_id=None,  # one-to-one模式不关联outline_id
+                outline_id=outline.id,  # one-to-one模式也要关联outline_id
                 status='pending',
                 content=""
             )
             db.add(chapter)
-        
+
         logger.info(f"一对一模式：为{len(outlines)}个大纲自动创建了对应的章节")
     
     return outlines
