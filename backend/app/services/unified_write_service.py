@@ -199,8 +199,8 @@ async def write_chapter_content(chapter_id: str, user_id: str, db: AsyncSession,
 
         async with AsyncSessionLocal() as bg_db:
             bg_ai_service = await get_user_ai_service_from_db(user_id, bg_db)
-            inner_tracker = TaskProgressTracker(f"unified_chapter_{chapter_id}", user_id, "章节")
 
+            # 直接使用传入的 tracker，不创建新的（避免任务ID不存在的问题）
             await _run_chapter_generation_bg(
                 task_input={
                     "chapter_id": chapter_id,
@@ -212,17 +212,18 @@ async def write_chapter_content(chapter_id: str, user_id: str, db: AsyncSession,
                 },
                 db=bg_db,
                 ai_service=bg_ai_service,
-                tracker=inner_tracker,
+                tracker=tracker,  # 使用传入的 tracker
                 user_id=user_id,
-                task_id=f"unified_chapter_{chapter_id}",
+                task_id=None,  # 不创建新任务
             )
 
-        # 刷新章节数据
-        await db.refresh(chapter)
-        if chapter.content and len(chapter.content) > 100:
+        # 重新查询章节获取最新状态（避免跨 session refresh 的 greenlet 问题）
+        result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
+        updated_chapter = result.scalar_one_or_none()
+        if updated_chapter and updated_chapter.content and len(updated_chapter.content) > 100:
             if tracker:
-                await tracker.loading(f"章节写作完成（{chapter.word_count}字）", 0.75)
-            logger.info(f"章节 {chapter_id} 内容已生成，字数: {chapter.word_count}")
+                await tracker.loading(f"章节写作完成（{updated_chapter.word_count}字）", 0.75)
+            logger.info(f"章节 {chapter_id} 内容已生成，字数: {updated_chapter.word_count}")
             return True
         else:
             logger.warning(f"章节 {chapter_id} 生成后仍无内容")

@@ -1,10 +1,10 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## 项目概述
 
-MuMuAINovel 是一个基于 AI 的智能小说创作助手，支持多 AI 模型（OpenAI/Gemini/Claude）、项目管理、大纲生成、角色关系管理、章节创作等功能。
+MuMuAINovel 是一个基于 AI 的智能小说创作助手，支持多 AI 模型（OpenAI/Gemini/Codex）、项目管理、大纲生成、角色关系管理、章节创作等功能。
 
 ## 开发命令
 
@@ -168,4 +168,3 @@ AI 服务采用客户端-提供者模式：
 1. **修改后端需重启**：修改 `backend/` 下的 Python 文件后，需重启后端服务
 2. **前端热重载**：Vite 支持热重载，修改 `frontend/` 下的文件会自动更新
 3. **数据库迁移**：修改 model 后需运行 `alembic revision --autogenerate -m "描述"` 生成迁移
-4. **修改后端 bug 时先看日志**：查看 `tasks/*.output` 或后端日志输出，定位问题后再修改代码
